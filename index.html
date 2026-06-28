@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Metropolis — Mobile City Builder</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="game-root">
+    <canvas id="city-canvas"></canvas>
+
+    <!-- Top status bar -->
+    <header id="hud-top">
+      <div class="hud-stat" id="stat-money">
+        <span class="hud-icon">$</span>
+        <span class="hud-value" id="money-value">0</span>
+      </div>
+      <div class="hud-stat" id="stat-pop">
+        <span class="hud-icon">&#128100;</span>
+        <span class="hud-value" id="pop-value">0</span>
+      </div>
+      <div class="hud-stat" id="stat-date">
+        <span class="hud-value" id="date-value">Wk 1</span>
+      </div>
+      <div class="hud-stat clickable" id="stat-speed" title="Game speed">
+        <span class="hud-value" id="speed-value">&#9658;</span>
+      </div>
+      <button class="hud-stat clickable" id="btn-menu" title="Menu">&#9776;</button>
+    </header>
+
+    <!-- Demand indicators -->
+    <aside id="demand-panel">
+      <div class="demand-bar" title="Residential demand">
+        <div class="demand-fill res" id="demand-res"></div>
+        <span class="demand-label">R</span>
+      </div>
+      <div class="demand-bar" title="Commercial demand">
+        <div class="demand-fill com" id="demand-com"></div>
+        <span class="demand-label">C</span>
+      </div>
+      <div class="demand-bar" title="Industrial demand">
+        <div class="demand-fill ind" id="demand-ind"></div>
+        <span class="demand-label">I</span>
+      </div>
+    </aside>
+
+    <!-- Bottom toolbar -->
+    <nav id="toolbar">
+      <button class="tool" data-tool="select"><span class="tool-ico">&#9758;</span><span class="tool-name">Pan</span></button>
+      <button class="tool" data-tool="road"><span class="tool-ico">&#9473;</span><span class="tool-name">Road</span></button>
+      <button class="tool" data-tool="zone-res"><span class="tool-ico" style="color:#4ade80">&#9632;</span><span class="tool-name">Res</span></button>
+      <button class="tool" data-tool="zone-com"><span class="tool-ico" style="color:#60a5fa">&#9632;</span><span class="tool-name">Com</span></button>
+      <button class="tool" data-tool="zone-ind"><span class="tool-ico" style="color:#fbbf24">&#9632;</span><span class="tool-name">Ind</span></button>
+      <button class="tool" data-tool="service"><span class="tool-ico">&#9733;</span><span class="tool-name">Services</span></button>
+      <button class="tool" data-tool="bulldoze"><span class="tool-ico">&#9986;</span><span class="tool-name">Demolish</span></button>
+    </nav>
+
+    <!-- Service / building picker (hidden by default) -->
+    <div id="service-picker" class="panel hidden">
+      <div class="panel-head"><span>Place a building</span><button class="panel-close" id="service-close">&times;</button></div>
+      <div class="panel-grid" id="service-grid"></div>
+    </div>
+
+    <!-- Menu panel -->
+    <div id="menu-panel" class="panel hidden">
+      <div class="panel-head"><span>Menu</span><button class="panel-close" id="menu-close">&times;</button></div>
+      <div class="menu-body">
+        <button class="menu-btn" id="btn-save">Save City</button>
+        <button class="menu-btn" id="btn-load">Load City</button>
+        <button class="menu-btn" id="btn-new">New City</button>
+        <button class="menu-btn" id="btn-help">How to Play</button>
+        <div class="menu-info" id="menu-stats"></div>
+      </div>
+    </div>
+
+    <!-- Help / intro overlay -->
+    <div id="help-overlay" class="overlay">
+      <div class="overlay-card">
+        <h1>Metropolis</h1>
+        <p class="subtitle">A mobile city builder inspired by Cities: Skylines</p>
+        <ul class="help-list">
+          <li><b>Drag</b> to pan, <b>pinch</b> to zoom.</li>
+          <li>Build <b>Roads</b> first — buildings only grow next to roads.</li>
+          <li>Paint <b>Residential / Commercial / Industrial</b> zones along roads.</li>
+          <li>Citizens move in based on <b>demand</b> (R/C/I bars on the left).</li>
+          <li>Place <b>Services</b> (power, water, police, parks) to keep them happy.</li>
+          <li>Watch your <b>budget</b> — services cost upkeep each week.</li>
+        </ul>
+        <button class="big-btn" id="start-btn">Start Building</button>
+      </div>
+    </div>
+
+    <!-- Floating toast -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/grid.js"></script>
+  <script src="js/simulation.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
