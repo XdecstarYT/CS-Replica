@@ -40,11 +40,14 @@ class Renderer3D {
     // ---- Materials ----
     this._initMaterials();
 
+    // ---- Models ----
+    this.models = new ModelBuilder();
+
     // ---- State ----
     this.tileMeshes = new Map();   // key "x,y" -> Mesh|Mesh[]
     this.levelCache = new Uint8Array(grid.w * grid.h).fill(255);
-    this.vehicleMeshes = [];
-    this.vehicleGeo = new THREE.BoxGeometry(0.22, 0.09, 0.14);
+    this.vehicleGroups = [];       // detailed vehicle Groups
+    this.vehiclePool = [];         // indexed by traffic vehicle slot
     this.timeOfDay = 0.35;
     this.nightFactor = 0;
     this.raycaster = new THREE.Raycaster();
@@ -309,48 +312,26 @@ class Renderer3D {
   }
 
   _buildBuilding(x, y, cx, cz, T, zone, level) {
-    const h = this._buildingHeight(x, y, zone, level);
-    const mats = zone === TILE.ZONE_RES ? this.mats.res : zone === TILE.ZONE_COM ? this.mats.com : this.mats.ind;
-    const mat = mats[level];
-    const footprint = 0.86 - level * 0.03;
-    const fw = T * footprint, fh = T * footprint;
-    const group = new THREE.Group();
-
-    // Main body
-    const body = new THREE.Mesh(new THREE.BoxGeometry(fw, h, fh), mat);
-    body.position.y = h / 2;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    group.add(body);
-
-    // Flat roof detail for taller buildings
-    if (level >= 2) {
-      const roofMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(fw * 0.7, 0.06, fh * 0.7), roofMat);
-      roof.position.y = h + 0.03;
-      group.add(roof);
-    }
-
-    // Antennas / water towers on top for variety
-    const rng = this._tileRng(x + 7, y + 3);
-    if (level === 3 && rng > 0.5) {
-      const antMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
-      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5), antMat);
-      ant.position.set(fw * 0.25, h + 0.25, fh * 0.25);
-      group.add(ant);
-      if (rng > 0.75) {
-        const ant2 = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.35), antMat);
-        ant2.position.set(-fw * 0.25, h + 0.175, -fh * 0.2);
-        group.add(ant2);
-      }
-    }
-
+    const rng = this._tileRng(x, y);
+    let group;
+    if (zone === TILE.ZONE_RES)      group = this.models.buildResidential(x, y, T, level, rng);
+    else if (zone === TILE.ZONE_COM) group = this.models.buildCommercial(x, y, T, level, rng);
+    else                             group = this.models.buildIndustrial(x, y, T, level, rng);
     group.position.set(cx, 0, cz);
     group._zoneLevel = level;
     return group;
   }
 
   _buildService(cx, cz, T, svc) {
+    const group = svc && svc.id === 'datacenter' ? this.models.buildAIDatacenter(T)
+                : svc && svc.id === 'aihub'      ? this.models.buildAIHub(T)
+                : this._buildServiceClassic(cx, cz, T, svc);
+    if (svc && svc.id !== 'datacenter' && svc.id !== 'aihub') return group; // already positioned
+    group.position.set(cx, 0, cz);
+    return group;
+  }
+
+  _buildServiceClassic(cx, cz, T, svc) {
     const color = svc ? parseInt(svc.color.replace('#', ''), 16) : 0x888888;
     const group = new THREE.Group();
     const h = 0.6;
@@ -359,13 +340,10 @@ class Renderer3D {
     body.position.y = h / 2;
     body.castShadow = true;
     group.add(body);
-
-    // Small indicator dome
     const domeMat = new THREE.MeshPhongMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.3), shininess: 80 });
     const dome = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), domeMat);
     dome.position.set(0, h + 0.12, 0);
     group.add(dome);
-
     group.position.set(cx, 0, cz);
     return group;
   }
@@ -498,6 +476,21 @@ class Renderer3D {
 
     // Tone mapping exposure — slightly warmer at dusk
     this.wgl.toneMappingExposure = 0.95 + d * 0.2 + Math.max(0, Math.sin(n * Math.PI) * 0.25);
+
+    // Animate beacons + AI pulses
+    const tm = performance.now() / 1000;
+    const beaconOn = Math.sin(tm * 2.5) > 0.6;
+    const ledG = Math.max(0, 0.55 + Math.sin(tm * 2.2) * 0.45);
+    const ringOpacity = Math.max(0.15, 0.5 + Math.sin(tm * 1.8) * 0.35);
+    for (const [, v] of this.tileMeshes) {
+      const grp = Array.isArray(v) ? null : v;
+      if (!grp || !grp.isGroup) continue;
+      if (grp._ledMat)  grp._ledMat.color.setRGB(0, ledG, 1.0);
+      if (grp._ringMat) grp._ringMat.opacity = ringOpacity;
+      grp.traverse(child => {
+        if (child._isBeacon) child.material.color.setHex(beaconOn ? 0xff2200 : 0x220000);
+      });
+    }
   }
 
   // ─────────────────────── Traffic ───────────────────────
@@ -506,31 +499,43 @@ class Renderer3D {
     if (!traffic) return;
     const veh = traffic.vehicles, T = this.T;
 
-    while (this.vehicleMeshes.length > veh.length) {
-      const m = this.vehicleMeshes.pop();
-      this.scene.remove(m);
-      m.geometry.dispose();
+    // Grow pool
+    while (this.vehiclePool.length < veh.length) {
+      const idx = this.vehiclePool.length;
+      const g = this.models.buildVehicle(idx);
+      g.castShadow = false;
+      this.scene.add(g);
+      this.vehiclePool.push(g);
     }
-    while (this.vehicleMeshes.length < veh.length) {
-      const m = new THREE.Mesh(this.vehicleGeo, new THREE.MeshPhongMaterial({ color: 0xffffff, shininess: 40 }));
-      m.castShadow = false;
-      this.scene.add(m);
-      this.vehicleMeshes.push(m);
+    // Hide extras
+    for (let k = 0; k < this.vehiclePool.length; k++) {
+      this.vehiclePool[k].visible = k < veh.length;
     }
 
     const n = this.nightFactor;
+    const hi = Math.max(0, (n - 0.45) * 1.1);
+
     for (let k = 0; k < veh.length; k++) {
       const v = veh[k];
       const dx = v.nx - v.x, dz = v.ny - v.y;
       const wx = (v.x + dx * v.t + 0.5 - dz * 0.18) * T;
       const wz = (v.y + dz * v.t + 0.5 + dx * 0.18) * T;
-      const m = this.vehicleMeshes[k];
-      m.position.set(wx, 0.065, wz);
-      if (dx !== 0 || dz !== 0) m.rotation.y = Math.atan2(-dx, -dz);
-      m.material.color.set(v.color);
-      // Headlights at night — warm emissive glow on vehicle body
-      const hi = Math.max(0, (n - 0.45) * 0.9);
-      m.material.emissive.setRGB(hi, hi * 0.85, hi * 0.4);
+      const g = this.vehiclePool[k];
+      g.position.set(wx, 0.04, wz);
+      if (dx !== 0 || dz !== 0) g.rotation.y = Math.atan2(-dx, -dz);
+
+      // Night: update headlight/taillight emissive on light meshes only
+      g.traverse(child => {
+        if (!child.isMesh || !child.material) return;
+        const mat = child.material;
+        if (mat.color && mat.color.r > 0.8 && mat.color.g > 0.8 && mat.color.b > 0.8) {
+          // white headlight
+          mat.emissive.setRGB(hi * 0.8, hi * 0.8, hi * 0.5);
+        } else if (mat.color && mat.color.r > 0.7 && mat.color.g < 0.2) {
+          // red taillight
+          mat.emissive.setRGB(hi * 0.6, 0, 0);
+        }
+      });
     }
   }
 
@@ -559,8 +564,8 @@ class Renderer3D {
     }
     this.tileMeshes.clear();
     this.levelCache = new Uint8Array(grid.w * grid.h).fill(255);
-    for (const m of this.vehicleMeshes) this.scene.remove(m);
-    this.vehicleMeshes.length = 0;
+    for (const g of this.vehiclePool) this.scene.remove(g);
+    this.vehiclePool.length = 0;
     this._buildWater();
     this.rebuildAll();
     this.camTarget.set(grid.w * this.T / 2, 0, grid.h * this.T / 2);

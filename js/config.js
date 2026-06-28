@@ -42,7 +42,9 @@ const SERVICES = [
   { id: 'fire',    name: 'Fire Dept',   ico: '🚒', cost: 3500, upkeep: 130, range: 10, safety: 1, color: '#ef4444' },
   { id: 'health',  name: 'Clinic',      ico: '🏥', cost: 4000, upkeep: 150, range: 10, health: 1, color: '#f87171' },
   { id: 'school',  name: 'School',      ico: '🏫', cost: 4500, upkeep: 160, range: 11, education: 1, color: '#c084fc' },
-  { id: 'park',    name: 'Park',        ico: '🌳', cost: 1200, upkeep: 30,  range: 6,  happy: 1, color: '#4ade80' },
+  { id: 'park',       name: 'Park',        ico: '🌳', cost: 1200,  upkeep: 30,  range: 6,  happy: 1, color: '#4ade80' },
+  { id: 'datacenter', name: 'Data Center', ico: '🖥', cost: 8000,  upkeep: 280, range: 8,  education: 1, color: '#0a1a50' },
+  { id: 'aihub',      name: 'AI Hub',      ico: '🤖', cost: 15000, upkeep: 500, range: 14, happy: 1, education: 1, color: '#0044ff' },
 ];
 
 const SERVICE_BY_ID = Object.fromEntries(SERVICES.map(s => [s.id, s]));
