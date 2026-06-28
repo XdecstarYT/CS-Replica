@@ -11,6 +11,9 @@ class Renderer {
     this.camX = grid.w * CONFIG.TILE * 0.5;
     this.camY = grid.h * CONFIG.TILE * 0.5;
     this.overlay = null; // 'power' | 'land' | null
+    this.traffic = null;       // optional Traffic instance
+    this.timeOfDay = 0.35;     // 0..1, advances over a ~day cycle
+    this.nightFactor = 0;      // 0 (day) .. 1 (deep night), derived each frame
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -43,8 +46,17 @@ class Renderer {
     this.zoom = Math.max(CONFIG.MIN_ZOOM, Math.min(CONFIG.MAX_ZOOM, this.zoom));
   }
 
+  // 0 at midday, 1 at deep night, smooth between.
+  _computeNight() {
+    // timeOfDay 0..1; treat 0.25 as noon, 0.75 as midnight.
+    const n = (1 - Math.cos((this.timeOfDay - 0.25) * Math.PI * 2)) / 2;
+    this.nightFactor = n;
+    return n;
+  }
+
   draw(hover, tool) {
     const ctx = this.ctx, g = this.grid, T = CONFIG.TILE;
+    this._computeNight();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = '#16324a';
     ctx.fillRect(0, 0, this.vw, this.vh);
@@ -68,6 +80,9 @@ class Renderer {
       }
     }
 
+    // Vehicles
+    if (this.traffic && this.zoom > 0.45) this._drawVehicles(ctx, T);
+
     // Overlay shading
     if (this.overlay) this._drawOverlay(ctx, g, x0, y0, x1, y1, T);
 
@@ -82,6 +97,33 @@ class Renderer {
     }
 
     ctx.restore();
+
+    // Day/night tint in screen space (over the whole world).
+    const n = this.nightFactor;
+    if (n > 0.02) {
+      ctx.fillStyle = `rgba(8,14,38,${(n * 0.5).toFixed(3)})`;
+      ctx.fillRect(0, 0, this.vw, this.vh);
+    }
+  }
+
+  _drawVehicles(ctx, T) {
+    const g = this.grid;
+    const s = Math.max(3, T * 0.16);
+    for (const v of this.traffic.vehicles) {
+      const dx = v.nx - v.x, dy = v.ny - v.y;
+      // interpolate centre-of-tile position
+      const wx = (v.x + dx * v.t + 0.5) * T;
+      const wy = (v.y + dy * v.t + 0.5) * T;
+      // offset to the right of travel direction so cars keep a lane
+      const ox = -dy * T * 0.16, oy = dx * T * 0.16;
+      ctx.fillStyle = v.color;
+      ctx.fillRect(wx + ox - s / 2, wy + oy - s / 2, s, s);
+      // headlight glow at night
+      if (this.nightFactor > 0.5) {
+        ctx.fillStyle = `rgba(255,240,180,${((this.nightFactor - 0.5) * 0.7).toFixed(3)})`;
+        ctx.fillRect(wx + ox - s * 0.6, wy + oy - s * 0.6, s * 1.2, s * 1.2);
+      }
+    }
   }
 
   _hoverValid(hover, tool) {
@@ -166,9 +208,11 @@ class Renderer {
     // roof shade
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fillRect(bx, by, bw, bh * 0.22);
-    // windows for higher levels
+    // windows for higher levels (warm glow at night)
     if (this.zoom > 0.6 && lvl >= 2) {
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillStyle = this.nightFactor > 0.45
+        ? `rgba(255,214,120,${(0.45 + this.nightFactor * 0.45).toFixed(3)})`
+        : 'rgba(255,255,255,0.55)';
       const cols = lvl >= 3 ? 3 : 2;
       const rows = lvl >= 3 ? 3 : 2;
       const ww = bw / (cols * 2 + 1);

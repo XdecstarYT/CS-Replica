@@ -5,7 +5,10 @@ class Game {
     this.grid = new Grid(CONFIG.GRID_W, CONFIG.GRID_H);
     this.sim = new Simulation(this.grid);
     this.renderer = new Renderer(document.getElementById('city-canvas'), this.grid);
+    this.traffic = new Traffic(this.grid);
+    this.renderer.traffic = this.traffic;
     this.ui = new UI(this);
+    this.dayLength = 90000; // ms for a full day/night cycle (real time)
 
     this.tool = 'select';
     this.selectedService = null;
@@ -112,6 +115,13 @@ class Game {
     const dt = t - this.lastTick;
     this.lastTick = t;
     const speed = CONFIG.SPEEDS[this.speedIndex];
+
+    // Day/night clock advances in real time (so the city feels alive even
+    // when the simulation is paused), faster at higher game speeds.
+    this.renderer.timeOfDay = (this.renderer.timeOfDay + dt / this.dayLength * (0.5 + speed * 0.5)) % 1;
+    // Keep traffic populated relative to city size and animate it.
+    this.traffic.sync(Math.round(this.sim.population / 12) + (this.sim.jobsC + this.sim.jobsI) / 20);
+    if (speed > 0) this.traffic.update(dt * Math.min(speed, 2));
     if (speed > 0) {
       this.accum += dt * speed;
       while (this.accum >= CONFIG.TICK_MS) {
@@ -150,6 +160,7 @@ class Game {
       this.sim = new Simulation(this.grid);
       this.sim.load(data.sim);
       this.renderer.grid = this.grid;
+      this.traffic.setGrid(this.grid);
       if (!silent) this.ui.toast('City loaded');
       return true;
     } catch (e) {
@@ -162,6 +173,7 @@ class Game {
     this.grid = new Grid(CONFIG.GRID_W, CONFIG.GRID_H);
     this.sim = new Simulation(this.grid);
     this.renderer.grid = this.grid;
+    this.traffic.setGrid(this.grid);
     this.renderer.camX = this.grid.w * CONFIG.TILE * 0.5;
     this.renderer.camY = this.grid.h * CONFIG.TILE * 0.5;
     this.ui.toast('New city founded');

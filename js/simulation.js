@@ -11,6 +11,7 @@ class Simulation {
     this.demand = { res: 0.6, com: 0.4, ind: 0.5 };
     this.happiness = 0.5;
     this.lastBalance = 0;
+    this.taxRate = 1.0;   // 0.5 .. 1.5 (multiplier on the base per-capita tax)
   }
 
   // Spread a circular coverage field from every service of the given keys.
@@ -120,9 +121,11 @@ class Simulation {
 
     // ---- Demand model (RCI) ----
     // Residential demand rises when there are jobs relative to residents.
+    // High taxes discourage move-ins; low taxes encourage them.
     const jobs = com + ind;
     const workforce = res * 0.55;
-    this.demand.res = clamp01(0.35 + (jobs - workforce) / Math.max(40, res + 40) + this.happiness * 0.2);
+    const taxPenalty = (this.taxRate - 1) * 0.35;
+    this.demand.res = clamp01(0.35 + (jobs - workforce) / Math.max(40, res + 40) + this.happiness * 0.2 - taxPenalty);
     // Commercial demand needs shoppers (residents) and goods (industry).
     this.demand.com = clamp01(0.25 + res / Math.max(60, comCap + 60) * 0.8 - com / Math.max(40, comCap + 40) * 0.5);
     // Industrial demand needs workers and downstream commerce.
@@ -130,7 +133,7 @@ class Simulation {
 
     // ---- Budget ----
     const citizensServed = res + com + ind;
-    const tax = citizensServed * TAX_PER_CAPITA * (0.6 + this.happiness * 0.6);
+    const tax = citizensServed * TAX_PER_CAPITA * this.taxRate * (0.6 + this.happiness * 0.6);
     let upkeep = 0;
     let roadCount = 0;
     for (let i = 0; i < g.type.length; i++) {
@@ -155,6 +158,7 @@ class Simulation {
       money: this.money, week: this.week,
       population: this.population, jobsC: this.jobsC, jobsI: this.jobsI,
       demand: this.demand, happiness: this.happiness,
+      taxRate: this.taxRate,
     };
   }
 

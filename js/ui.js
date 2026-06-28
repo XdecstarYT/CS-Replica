@@ -17,6 +17,8 @@ class UI {
       menuPanel: document.getElementById('menu-panel'),
       menuStats: document.getElementById('menu-stats'),
       help: document.getElementById('help-overlay'),
+      taxSlider: document.getElementById('tax-slider'),
+      taxReadout: document.getElementById('tax-readout'),
     };
     this.toastTimer = null;
     this._buildServicePicker();
@@ -39,6 +41,12 @@ class UI {
     document.getElementById('btn-new').addEventListener('click', () => { this.game.newCity(); this.toggleMenu(false); });
     document.getElementById('btn-help').addEventListener('click', () => { this.el.help.classList.remove('hidden'); this.toggleMenu(false); });
     document.getElementById('start-btn').addEventListener('click', () => this.el.help.classList.add('hidden'));
+    // Tax policy
+    this.el.taxSlider.addEventListener('input', () => {
+      const pct = parseInt(this.el.taxSlider.value, 10);
+      this.game.sim.taxRate = pct / 100;
+      this.el.taxReadout.textContent = pct + '%';
+    });
   }
 
   _buildServicePicker() {
@@ -68,7 +76,12 @@ class UI {
   toggleMenu(force) {
     const show = force === undefined ? this.el.menuPanel.classList.contains('hidden') : force;
     this.el.menuPanel.classList.toggle('hidden', !show);
-    if (show) this._refreshMenuStats();
+    if (show) {
+      const pct = Math.round((this.game.sim.taxRate || 1) * 100);
+      this.el.taxSlider.value = pct;
+      this.el.taxReadout.textContent = pct + '%';
+      this._refreshMenuStats();
+    }
   }
 
   _refreshMenuStats() {

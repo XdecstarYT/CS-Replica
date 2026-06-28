@@ -70,6 +70,11 @@
     <div id="menu-panel" class="panel hidden">
       <div class="panel-head"><span>Menu</span><button class="panel-close" id="menu-close">&times;</button></div>
       <div class="menu-body">
+        <div class="menu-slider">
+          <label for="tax-slider">Tax rate: <b id="tax-readout">100%</b></label>
+          <input type="range" id="tax-slider" min="50" max="150" step="5" value="100" />
+          <small>Higher taxes earn more per week but slow growth.</small>
+        </div>
         <button class="menu-btn" id="btn-save">Save City</button>
         <button class="menu-btn" id="btn-load">Load City</button>
         <button class="menu-btn" id="btn-new">New City</button>
@@ -102,6 +107,7 @@
   <script src="js/config.js"></script>
   <script src="js/grid.js"></script>
   <script src="js/simulation.js"></script>
+  <script src="js/traffic.js"></script>
   <script src="js/render.js"></script>
   <script src="js/input.js"></script>
   <script src="js/ui.js"></script>

@@ -209,6 +209,19 @@ html, body {
 }
 .menu-btn:active { background: #25344f; }
 .menu-info { color: var(--muted); font-size: 12px; line-height: 1.6; padding: 4px; }
+.menu-slider {
+  background: var(--panel-2);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.menu-slider label { font-size: 14px; }
+.menu-slider label b { color: var(--accent); }
+.menu-slider small { color: var(--muted); font-size: 11px; }
+.menu-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 /* ---------- Overlay ---------- */
 .overlay {
