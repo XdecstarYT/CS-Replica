@@ -46,8 +46,8 @@ class Renderer3D {
     // ---- State ----
     this.tileMeshes = new Map();   // key "x,y" -> Mesh|Mesh[]
     this.levelCache = new Uint8Array(grid.w * grid.h).fill(255);
-    this.vehicleGroups = [];       // detailed vehicle Groups
-    this.vehiclePool = [];         // indexed by traffic vehicle slot
+    this.vehiclePool  = [];
+    this.citizenPool  = [];
     this.timeOfDay = 0.35;
     this.nightFactor = 0;
     this.raycaster = new THREE.Raycaster();
@@ -479,14 +479,18 @@ class Renderer3D {
 
     // Animate beacons + AI pulses
     const tm = performance.now() / 1000;
-    const beaconOn = Math.sin(tm * 2.5) > 0.6;
-    const ledG = Math.max(0, 0.55 + Math.sin(tm * 2.2) * 0.45);
-    const ringOpacity = Math.max(0.15, 0.5 + Math.sin(tm * 1.8) * 0.35);
+    const beaconOn  = Math.sin(tm * 2.5) > 0.6;
+    const ledG      = Math.max(0, 0.52 + Math.sin(tm * 2.3) * 0.48);
+    const ring1Op   = Math.max(0.15, 0.55 + Math.sin(tm * 1.9) * 0.35);
+    const ring2Op   = Math.max(0.10, 0.45 + Math.sin(tm * 2.7 + 1.2) * 0.35);
+    const ledRingOp = Math.max(0.40, 0.75 + Math.sin(tm * 1.5) * 0.25);
     for (const [, v] of this.tileMeshes) {
       const grp = Array.isArray(v) ? null : v;
       if (!grp || !grp.isGroup) continue;
-      if (grp._ledMat)  grp._ledMat.color.setRGB(0, ledG, 1.0);
-      if (grp._ringMat) grp._ringMat.opacity = ringOpacity;
+      if (grp._ledMat)     grp._ledMat.color.setRGB(0, ledG, 1.0);
+      if (grp._ringMat)    grp._ringMat.opacity  = ring1Op;
+      if (grp._ring2Mat)   grp._ring2Mat.opacity = ring2Op;
+      if (grp._ledRingMat) grp._ledRingMat.opacity = ledRingOp;
       grp.traverse(child => {
         if (child._isBeacon) child.material.color.setHex(beaconOn ? 0xff2200 : 0x220000);
       });
@@ -539,11 +543,71 @@ class Renderer3D {
     }
   }
 
+  // ─────────────────────── Citizens ───────────────────────
+
+  _updateCitizens(citizens) {
+    if (!citizens) return;
+    const cits = citizens.citizens, T = this.T;
+    const tm = performance.now() / 1000;
+
+    while (this.citizenPool.length < cits.length) {
+      const g = this.models.buildCitizen(this.citizenPool.length);
+      this.scene.add(g);
+      this.citizenPool.push(g);
+    }
+    for (let k = 0; k < this.citizenPool.length; k++) {
+      this.citizenPool[k].visible = k < cits.length;
+    }
+
+    const haloOpacity = Math.max(0.1, 0.65 + Math.sin(tm * 2.8) * 0.30);
+
+    for (let k = 0; k < cits.length; k++) {
+      const c = cits[k];
+      const dx = c.nx - c.x, dz = c.ny - c.y;
+      // World position: lerp along current segment, then offset to sidewalk
+      const wx_c = (c.x + 0.5 + dx * c.t) * T;
+      const wz_c = (c.y + 0.5 + dz * c.t) * T;
+      // Perpendicular (rotate direction 90°) for sidewalk offset
+      const sidewalkDist = 0.30;
+      const wx = wx_c + (-dz) * sidewalkDist * c.sidewalkSide;
+      const wz = wz_c + ( dx) * sidewalkDist * c.sidewalkSide;
+
+      const g = this.citizenPool[k];
+      const phase = tm * c.speed * 7.5 + k * 2.399; // golden-ratio offset avoids sync
+      const swing = Math.sin(phase) * 0.52;
+      const bob   = Math.abs(Math.sin(phase * 0.5)) * 0.004;
+
+      g.position.set(wx, 0.005 + bob, wz);
+      if (dx !== 0 || dz !== 0) g.rotation.y = Math.atan2(-dx, -dz);
+
+      // Walk animation
+      if (g._leftLeg) {
+        g._leftLeg.rotation.x  =  swing;
+        g._rightLeg.rotation.x = -swing;
+        if (g._leftLegL) {
+          // Lower leg trails with extra bend
+          g._leftLegL.rotation.x  = Math.max(0, swing) * 0.7;
+          g._rightLegL.rotation.x = Math.max(0, -swing) * 0.7;
+        }
+        g._leftArm.rotation.x  = -swing * 0.55;
+        g._rightArm.rotation.x =  swing * 0.55;
+        if (g._leftForearm) {
+          g._leftForearm.rotation.x  = -swing * 0.3;
+          g._rightForearm.rotation.x =  swing * 0.3;
+        }
+      }
+
+      // AI halo pulse
+      if (g._haloMat) g._haloMat.opacity = haloOpacity;
+    }
+  }
+
   // ─────────────────────── Main draw ───────────────────────
 
-  draw(traffic) {
+  draw(traffic, citizens) {
     this._updateDayNight();
     this._updateVehicles(traffic);
+    this._updateCitizens(citizens);
     this.wgl.render(this.scene, this.camera);
   }
 
@@ -564,8 +628,10 @@ class Renderer3D {
     }
     this.tileMeshes.clear();
     this.levelCache = new Uint8Array(grid.w * grid.h).fill(255);
-    for (const g of this.vehiclePool) this.scene.remove(g);
-    this.vehiclePool.length = 0;
+    for (const g of this.vehiclePool)  this.scene.remove(g);
+    for (const g of this.citizenPool) this.scene.remove(g);
+    this.vehiclePool.length  = 0;
+    this.citizenPool.length  = 0;
     this._buildWater();
     this.rebuildAll();
     this.camTarget.set(grid.w * this.T / 2, 0, grid.h * this.T / 2);

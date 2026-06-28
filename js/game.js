@@ -5,7 +5,8 @@ class Game {
     this.grid = new Grid(CONFIG.GRID_W, CONFIG.GRID_H);
     this.sim = new Simulation(this.grid);
     this.renderer = new Renderer3D(document.getElementById('city-canvas'), this.grid);
-    this.traffic = new Traffic(this.grid);
+    this.traffic  = new Traffic(this.grid);
+    this.citizens = new Citizens(this.grid);
     this.ui = new UI(this);
     this.dayLength = 90000; // ms per full day/night cycle (real time)
 
@@ -144,7 +145,9 @@ class Game {
 
     this.renderer.timeOfDay = (this.renderer.timeOfDay + dt / this.dayLength * (0.5 + speed * 0.5)) % 1;
     this.traffic.sync(Math.round(this.sim.population / 12) + (this.sim.jobsC + this.sim.jobsI) / 20);
+    this.citizens.sync(this.sim.population);
     if (speed > 0) this.traffic.update(dt * Math.min(speed, 2));
+    if (speed > 0) this.citizens.update(dt * Math.min(speed, 2));
 
     if (speed > 0) {
       this.accum += dt * speed;
@@ -161,7 +164,7 @@ class Game {
       }
     }
 
-    this.renderer.draw(this.traffic);
+    this.renderer.draw(this.traffic, this.citizens);
     this.ui.update();
     requestAnimationFrame(tt => this.loop(tt));
   }
@@ -187,6 +190,7 @@ class Game {
       this.sim.load(data.sim);
       this.renderer.setGrid(this.grid);
       this.traffic.setGrid(this.grid);
+      this.citizens.setGrid(this.grid);
       if (!silent) this.ui.toast('City loaded');
       return true;
     } catch (e) {
@@ -200,6 +204,7 @@ class Game {
     this.sim = new Simulation(this.grid);
     this.renderer.setGrid(this.grid);
     this.traffic.setGrid(this.grid);
+    this.citizens.setGrid(this.grid);
     this.ui.toast('New city founded');
   }
 }
