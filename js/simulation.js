@@ -102,8 +102,9 @@ class Simulation {
       else if (g.level[i] > wantLevel && Math.random() < 0.25) g.level[i]--;
 
       const cap = (BUILDING_LEVELS[t][g.level[i]] || { cap: 0 }).cap;
-      // occupancy eases toward capacity scaled by quality.
-      const target = Math.round(cap * (0.4 + quality * 0.6));
+      // occupancy eases toward capacity scaled by quality (and policy growth).
+      const gm = this.policyMods ? (this.policyMods.growthMult ?? 1) : 1;
+      const target = Math.min(cap, Math.round(cap * (0.4 + quality * 0.6) * gm));
       if (g.pop[i] < target) g.pop[i] += Math.ceil((target - g.pop[i]) * 0.3);
       else g.pop[i] = target;
 
@@ -118,6 +119,8 @@ class Simulation {
     this.jobsC = com;
     this.jobsI = ind;
     this.happiness = happinessN ? happinessSum / happinessN : 0.5;
+    // Politics hook: laws/policies nudge happiness (additive, neutral by default).
+    if (this.policyMods) this.happiness = clamp01(this.happiness + (this.policyMods.happyAdd || 0));
 
     // ---- Demand model (RCI) ----
     // Residential demand rises when there are jobs relative to residents.
@@ -133,7 +136,8 @@ class Simulation {
 
     // ---- Budget ----
     const citizensServed = res + com + ind;
-    const tax = citizensServed * TAX_PER_CAPITA * this.taxRate * (0.6 + this.happiness * 0.6);
+    const pm = this.policyMods || {};
+    const tax = citizensServed * TAX_PER_CAPITA * this.taxRate * (0.6 + this.happiness * 0.6) * (pm.taxMult ?? 1) + (pm.revenueAdd || 0);
     let upkeep = 0;
     let roadCount = 0;
     for (let i = 0; i < g.type.length; i++) {
@@ -144,6 +148,7 @@ class Simulation {
       }
     }
     upkeep += roadCount * UPKEEP_PER_ROAD;
+    upkeep += (pm.upkeepAdd || 0);   // policy upkeep / debt servicing (can be negative = savings)
     this.lastBalance = Math.round(tax - upkeep);
     this.money += this.lastBalance;
     this.week++;

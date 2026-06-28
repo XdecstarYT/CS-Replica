@@ -34,6 +34,10 @@
         <span class="hud-icon">&#129504;</span>
         <span class="hud-value ai-grade" id="ai-grade">–</span>
       </button>
+      <button class="hud-stat clickable" id="btn-gov" title="Government & Politics">
+        <span class="hud-icon">&#127963;</span>
+        <span class="hud-value" id="gov-approval">50%</span>
+      </button>
       <button class="hud-stat clickable" id="btn-menu" title="Menu">&#9776;</button>
     </header>
 
@@ -119,6 +123,22 @@
       </div>
     </div>
 
+    <!-- Government & Politics hub -->
+    <div id="gov-panel" class="panel hidden gov-panel">
+      <div class="panel-head">
+        <span>&#127963; Government</span>
+        <button class="panel-close" id="gov-close">&times;</button>
+      </div>
+      <div class="gov-tabs" id="gov-tabs"></div>
+      <div class="gov-body" id="gov-body"></div>
+    </div>
+
+    <!-- Political event modal -->
+    <div id="gov-event" class="overlay hidden"></div>
+
+    <!-- Election night overlay -->
+    <div id="gov-election" class="overlay hidden"></div>
+
     <!-- Help / intro overlay -->
     <div id="help-overlay" class="overlay">
       <div class="overlay-card">
@@ -149,6 +169,11 @@
   <script src="js/models.js"></script>
   <script src="js/render3d.js"></script>
   <script src="js/advisor.js"></script>
+  <script src="js/politics/parties.js"></script>
+  <script src="js/politics/laws.js"></script>
+  <script src="js/politics/events.js"></script>
+  <script src="js/politics/government.js"></script>
+  <script src="js/politics/politics_ui.js"></script>
   <script src="js/input3d.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/game.js"></script>

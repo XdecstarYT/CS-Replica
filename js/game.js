@@ -8,7 +8,9 @@ class Game {
     this.traffic  = new Traffic(this.grid);
     this.citizens = new Citizens(this.grid);
     this.ai = new CityAI(this);
+    this.gov = new Government(this);
     this.ui = new UI(this);
+    this.politicsUI = new PoliticsUI(this);
     this.dayLength = 90000; // ms per full day/night cycle (real time)
 
     this.tool = 'select';
@@ -165,6 +167,9 @@ class Game {
         const nudge = this.ai.maybeNudge();
         if (nudge) this.ui.toast(nudge);
 
+        // ── Government & politics weekly tick ──
+        this.gov.tick();
+
         if (res.bankrupt && !this._warnedBankrupt) {
           this._warnedBankrupt = true;
           this.ui.toast('⚠ City is bankrupt! Cut services or raise population.');
@@ -176,13 +181,14 @@ class Game {
 
     this.renderer.draw(this.traffic, this.citizens);
     this.ui.update();
+    this.politicsUI.update();
     requestAnimationFrame(tt => this.loop(tt));
   }
 
   // ---- Persistence ----
   save(silent) {
     try {
-      const data = { grid: this.grid.serialize(), sim: this.sim.serialize(), v: 1 };
+      const data = { grid: this.grid.serialize(), sim: this.sim.serialize(), gov: this.gov.serialize(), v: 1 };
       localStorage.setItem(CONFIG.AUTOSAVE_KEY, JSON.stringify(data));
       if (!silent) this.ui.toast('City saved');
     } catch (e) {
@@ -202,6 +208,9 @@ class Game {
       this.traffic.setGrid(this.grid);
       this.citizens.setGrid(this.grid);
       this.ai.reset();
+      this.gov.reset();
+      if (data.gov) this.gov.load(data.gov);
+      this.politicsUI.reset();
       if (!silent) this.ui.toast('City loaded');
       return true;
     } catch (e) {
@@ -217,6 +226,8 @@ class Game {
     this.traffic.setGrid(this.grid);
     this.citizens.setGrid(this.grid);
     this.ai.reset();
+    this.gov.reset();
+    this.politicsUI.reset();
     this.renderer.setOverlay(null);
     this.ui.toast('New city founded');
   }
