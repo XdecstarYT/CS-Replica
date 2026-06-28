@@ -30,6 +30,10 @@
       <div class="hud-stat clickable" id="stat-speed" title="Game speed">
         <span class="hud-value" id="speed-value">&#9658;</span>
       </div>
+      <button class="hud-stat clickable" id="btn-ai" title="ARIA — City AI advisor">
+        <span class="hud-icon">&#129504;</span>
+        <span class="hud-value ai-grade" id="ai-grade">–</span>
+      </button>
       <button class="hud-stat clickable" id="btn-menu" title="Menu">&#9776;</button>
     </header>
 
@@ -83,18 +87,50 @@
       </div>
     </div>
 
+    <!-- ARIA AI advisor panel -->
+    <div id="ai-panel" class="panel hidden">
+      <div class="panel-head">
+        <span><span class="ai-dot"></span>ARIA &mdash; City AI</span>
+        <button class="panel-close" id="ai-close">&times;</button>
+      </div>
+      <div class="ai-body">
+        <div class="ai-rating">
+          <div class="ai-grade-badge" id="ai-grade-badge">–</div>
+          <div class="ai-rating-meta">
+            <div class="ai-score-row"><span>City score</span><b id="ai-score">0</b></div>
+            <div class="ai-score-track"><div class="ai-score-fill" id="ai-score-fill"></div></div>
+          </div>
+        </div>
+        <p class="ai-briefing" id="ai-briefing">Booting analysis&hellip;</p>
+        <div class="ai-actions">
+          <button class="ai-btn" id="ai-suggest-res">🏠 Where to build homes?</button>
+          <button class="ai-btn" id="ai-suggest-com">🏢 Best shop spot?</button>
+          <button class="ai-btn" id="ai-suggest-ind">🏭 Best factory spot?</button>
+        </div>
+        <div class="ai-overlays">
+          <span class="ai-ovl-label">Heat-map:</span>
+          <button class="ai-ovl active" data-overlay="">Off</button>
+          <button class="ai-ovl" data-overlay="power">⚡Power</button>
+          <button class="ai-ovl" data-overlay="water">💧Water</button>
+          <button class="ai-ovl" data-overlay="services">⭐Services</button>
+          <button class="ai-ovl" data-overlay="desirability">📈Value</button>
+        </div>
+        <div class="ai-insights" id="ai-insights"></div>
+      </div>
+    </div>
+
     <!-- Help / intro overlay -->
     <div id="help-overlay" class="overlay">
       <div class="overlay-card">
         <h1>Metropolis</h1>
-        <p class="subtitle">A mobile city builder inspired by Cities: Skylines</p>
+        <p class="subtitle">A mobile-first 3D city builder with a live AI advisor</p>
         <ul class="help-list">
           <li><b>Drag</b> to pan, <b>pinch</b> to zoom.</li>
           <li>Build <b>Roads</b> first — buildings only grow next to roads.</li>
           <li>Paint <b>Residential / Commercial / Industrial</b> zones along roads.</li>
           <li>Citizens move in based on <b>demand</b> (R/C/I bars on the left).</li>
           <li>Place <b>Services</b> (power, water, police, parks) to keep them happy.</li>
-          <li>Watch your <b>budget</b> — services cost upkeep each week.</li>
+          <li>Tap <b>🧠 ARIA</b> for live analysis, forecasts and build advice.</li>
         </ul>
         <button class="big-btn" id="start-btn">Start Building</button>
       </div>
@@ -112,6 +148,7 @@
   <script src="js/citizens.js"></script>
   <script src="js/models.js"></script>
   <script src="js/render3d.js"></script>
+  <script src="js/advisor.js"></script>
   <script src="js/input3d.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/game.js"></script>

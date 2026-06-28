@@ -7,6 +7,7 @@ class Game {
     this.renderer = new Renderer3D(document.getElementById('city-canvas'), this.grid);
     this.traffic  = new Traffic(this.grid);
     this.citizens = new Citizens(this.grid);
+    this.ai = new CityAI(this);
     this.ui = new UI(this);
     this.dayLength = 90000; // ms per full day/night cycle (real time)
 
@@ -155,6 +156,15 @@ class Game {
         this.accum -= CONFIG.TICK_MS;
         const res = this.sim.step();
         this.renderer.syncBuildings(); // update grown buildings in 3D
+
+        // ── ARIA: observe, analyse periodically, nudge, refresh overlays ──
+        this.ai.observe();
+        if (this.sim.week % 3 === 0 || !this.ai.report) this.ai.analyze();
+        if (this.renderer.overlayMode) this.renderer.updateOverlay(this.sim);
+        if (!this.ui.el.aiPanel.classList.contains('hidden')) this.ui.renderAI();
+        const nudge = this.ai.maybeNudge();
+        if (nudge) this.ui.toast(nudge);
+
         if (res.bankrupt && !this._warnedBankrupt) {
           this._warnedBankrupt = true;
           this.ui.toast('⚠ City is bankrupt! Cut services or raise population.');
@@ -191,6 +201,7 @@ class Game {
       this.renderer.setGrid(this.grid);
       this.traffic.setGrid(this.grid);
       this.citizens.setGrid(this.grid);
+      this.ai.reset();
       if (!silent) this.ui.toast('City loaded');
       return true;
     } catch (e) {
@@ -205,6 +216,8 @@ class Game {
     this.renderer.setGrid(this.grid);
     this.traffic.setGrid(this.grid);
     this.citizens.setGrid(this.grid);
+    this.ai.reset();
+    this.renderer.setOverlay(null);
     this.ui.toast('New city founded');
   }
 }

@@ -19,6 +19,14 @@ class UI {
       help: document.getElementById('help-overlay'),
       taxSlider: document.getElementById('tax-slider'),
       taxReadout: document.getElementById('tax-readout'),
+      // ARIA AI advisor
+      aiBtnGrade: document.getElementById('ai-grade'),
+      aiPanel: document.getElementById('ai-panel'),
+      aiGradeBadge: document.getElementById('ai-grade-badge'),
+      aiScore: document.getElementById('ai-score'),
+      aiScoreFill: document.getElementById('ai-score-fill'),
+      aiBriefing: document.getElementById('ai-briefing'),
+      aiInsights: document.getElementById('ai-insights'),
     };
     this.toastTimer = null;
     this._buildServicePicker();
@@ -47,6 +55,89 @@ class UI {
       this.game.sim.taxRate = pct / 100;
       this.el.taxReadout.textContent = pct + '%';
     });
+
+    // ── ARIA AI advisor ──
+    document.getElementById('btn-ai').addEventListener('click', () => this.toggleAI());
+    document.getElementById('ai-close').addEventListener('click', () => this.toggleAI(false));
+
+    document.getElementById('ai-suggest-res').addEventListener('click', () => this._suggestSite('res', 'zone-res'));
+    document.getElementById('ai-suggest-com').addEventListener('click', () => this._suggestSite('com', 'zone-com'));
+    document.getElementById('ai-suggest-ind').addEventListener('click', () => this._suggestSite('ind', 'zone-ind'));
+
+    document.querySelectorAll('.ai-ovl').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.ai-ovl').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const mode = btn.dataset.overlay || null;
+        this.game.renderer.setOverlay(mode, this.game.sim);
+      });
+    });
+  }
+
+  // ── AI advisor panel ──
+  toggleAI(force) {
+    const show = force === undefined ? this.el.aiPanel.classList.contains('hidden') : force;
+    this.el.aiPanel.classList.toggle('hidden', !show);
+    if (show) {
+      this.hideServicePicker();
+      this.renderAI();
+    }
+  }
+
+  renderAI() {
+    const ai = this.game.ai;
+    if (!ai) return;
+    const r = ai.analyze();
+    this.el.aiGradeBadge.textContent = r.grade;
+    this.el.aiGradeBadge.dataset.grade = r.grade;
+    this.el.aiScore.textContent = r.score;
+    this.el.aiScoreFill.style.width = r.score + '%';
+    this.el.aiBriefing.textContent = r.briefing;
+
+    const host = this.el.aiInsights;
+    host.innerHTML = '';
+    for (const ins of r.insights) {
+      const card = document.createElement('div');
+      card.className = 'ai-insight ' + ins.level;
+      card.innerHTML =
+        `<div class="ai-ins-ico">${ins.icon}</div>` +
+        `<div class="ai-ins-text"><div class="ai-ins-title">${ins.title}</div>` +
+        `<div class="ai-ins-detail">${ins.detail}</div></div>`;
+      if (ins.overlay || ins.tool || ins.service) {
+        card.classList.add('clickable');
+        card.addEventListener('click', () => this._applyInsight(ins));
+      }
+      host.appendChild(card);
+    }
+  }
+
+  _applyInsight(ins) {
+    if (ins.overlay) {
+      document.querySelectorAll('.ai-ovl').forEach(b => b.classList.toggle('active', b.dataset.overlay === ins.overlay));
+      this.game.renderer.setOverlay(ins.overlay, this.game.sim);
+    }
+    if (ins.service) {
+      this.game.selectedService = ins.service;
+      this.game.selectTool('service', document.querySelector('.tool[data-tool="service"]'));
+      this.el.serviceGrid.querySelectorAll('.svc-card').forEach(c => c.classList.toggle('selected', c.dataset.id === ins.service));
+      const svc = SERVICE_BY_ID[ins.service];
+      this.toggleAI(false);
+      this.toast(`ARIA: place a ${svc ? svc.name : ins.service} where it's needed`);
+    } else if (ins.tool) {
+      this.game.selectTool(ins.tool, document.querySelector(`.tool[data-tool="${ins.tool}"]`));
+      this.toggleAI(false);
+    }
+  }
+
+  _suggestSite(kind, tool) {
+    const ai = this.game.ai;
+    const site = ai.suggestSite(kind);
+    if (!site) { this.toast('ARIA: no road-connected land free yet — build more roads'); return; }
+    this.game.renderer.markTile(site.x, site.y);
+    this.game.selectTool(tool, document.querySelector(`.tool[data-tool="${tool}"]`));
+    this.toggleAI(false);
+    const label = { res: 'homes', com: 'shops', ind: 'industry' }[kind] || 'zoning';
+    this.toast(`ARIA: best spot for ${label} marked — paint it in`);
   }
 
   _buildServicePicker() {
@@ -112,6 +203,13 @@ class UI {
     this.el.demandCom.style.height = Math.round(s.demand.com * 100) + '%';
     this.el.demandInd.style.height = Math.round(s.demand.ind * 100) + '%';
     if (!this.el.menuPanel.classList.contains('hidden')) this._refreshMenuStats();
+
+    // ARIA grade chip in the HUD (uses the AI's most recent report)
+    if (this.game.ai && this.game.ai.report) {
+      const g = this.game.ai.report.grade;
+      this.el.aiBtnGrade.textContent = g;
+      this.el.aiBtnGrade.dataset.grade = g;
+    }
   }
 
   toast(msg) {
