@@ -4,33 +4,34 @@ class Game {
   constructor() {
     this.grid = new Grid(CONFIG.GRID_W, CONFIG.GRID_H);
     this.sim = new Simulation(this.grid);
-    this.renderer = new Renderer(document.getElementById('city-canvas'), this.grid);
+    this.renderer = new Renderer3D(document.getElementById('city-canvas'), this.grid);
     this.traffic = new Traffic(this.grid);
-    this.renderer.traffic = this.traffic;
     this.ui = new UI(this);
-    this.dayLength = 90000; // ms for a full day/night cycle (real time)
+    this.dayLength = 90000; // ms per full day/night cycle (real time)
 
     this.tool = 'select';
     this.selectedService = null;
     this.hover = null;
-    this.speedIndex = 1; // start at normal speed
+    this.speedIndex = 1;
     this.lastTick = performance.now();
     this.accum = 0;
 
-    this.input = new InputManager(
+    this.input = new InputManager3D(
       this.renderer.canvas,
       this.renderer,
       (tx, ty, start) => this.paint(tx, ty, start),
-      (tile) => { this.hover = tile; }
+      (tile) => {
+        this.hover = tile;
+        if (tile) this.renderer.setHover(tile, this._validPaint(tile.tx, tile.ty));
+        else this.renderer.setHover(null);
+      }
     );
 
-    // try autoload
     if (!this.load(true)) this.ui.toast('New city founded — build roads to begin!');
 
     this.selectTool('select', document.querySelector('.tool[data-tool="select"]'));
     requestAnimationFrame(t => this.loop(t));
 
-    // autosave every 30s
     setInterval(() => this.save(true), 30000);
     window.addEventListener('beforeunload', () => this.save(true));
   }
@@ -40,8 +41,8 @@ class Game {
     this.input.setTool(tool);
     document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
-    if (tool === 'service') { this.ui.showServicePicker(); }
-    else { this.ui.hideServicePicker(); }
+    if (tool === 'service') this.ui.showServicePicker();
+    else this.ui.hideServicePicker();
   }
 
   cycleSpeed() {
@@ -49,7 +50,17 @@ class Game {
     this.ui.update();
   }
 
-  // ---- Build actions ----
+  _validPaint(tx, ty) {
+    const g = this.grid;
+    if (!g.inBounds(tx, ty)) return false;
+    const t = this.tool;
+    const i = g.idx(tx, ty);
+    if (t === 'bulldoze') return g.type[i] !== TILE.GRASS && g.type[i] !== TILE.WATER;
+    if (t === 'road' || t.startsWith('zone') || t === 'service') return g.isBuildable(tx, ty);
+    return true;
+  }
+
+  // ---- Build ----
   paint(tx, ty, start) {
     const g = this.grid;
     if (!g.inBounds(tx, ty)) return;
@@ -61,6 +72,12 @@ class Game {
       if (!this._charge(50)) return;
       this._clearTile(i);
       g.type[i] = TILE.ROAD;
+      this.renderer.updateTile(tx, ty);
+      // Refresh neighbours so lane markings update
+      for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx = tx+dx, nz = ty+dz;
+        if (g.inBounds(nx, nz) && g.type[g.idx(nx, nz)] === TILE.ROAD) this.renderer.updateTile(nx, nz);
+      }
     }
     else if (this.tool.startsWith('zone')) {
       const z = ZONE_OF[this.tool];
@@ -71,9 +88,10 @@ class Game {
       this._clearTile(i);
       g.type[i] = z;
       g.level[i] = 0; g.pop[i] = 0;
+      this.renderer.updateTile(tx, ty);
     }
     else if (this.tool === 'service') {
-      if (!start) return; // single placement per tap, not drag
+      if (!start) return;
       const svc = SERVICE_BY_ID[this.selectedService];
       if (!svc) return this._deny('Pick a building first');
       if (g.type[i] === TILE.WATER) return this._deny('Can\'t build on water');
@@ -81,12 +99,21 @@ class Game {
       this._clearTile(i);
       g.type[i] = TILE.SERVICE;
       g.service[i] = svc.id;
+      this.renderer.updateTile(tx, ty);
       this.ui.toast(`${svc.name} built`);
     }
     else if (this.tool === 'bulldoze') {
       if (g.type[i] === TILE.WATER || g.type[i] === TILE.GRASS) return;
+      const wasRoad = g.type[i] === TILE.ROAD;
       this._clearTile(i);
       g.type[i] = TILE.GRASS;
+      this.renderer.updateTile(tx, ty);
+      if (wasRoad) {
+        for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nx = tx+dx, nz = ty+dz;
+          if (g.inBounds(nx, nz) && g.type[g.idx(nx, nz)] === TILE.ROAD) this.renderer.updateTile(nx, nz);
+        }
+      }
     }
   }
 
@@ -94,8 +121,7 @@ class Game {
     this.grid.level[i] = 0;
     this.grid.pop[i] = 0;
     this.grid.service[i] = null;
-    if (this.grid.type[i] === TILE.WATER) return;
-    this.grid.type[i] = TILE.GRASS;
+    if (this.grid.type[i] !== TILE.WATER) this.grid.type[i] = TILE.GRASS;
   }
 
   _charge(amount) {
@@ -110,23 +136,22 @@ class Game {
     this.ui.toast(msg);
   }
 
-  // ---- Main loop ----
+  // ---- Loop ----
   loop(t) {
     const dt = t - this.lastTick;
     this.lastTick = t;
     const speed = CONFIG.SPEEDS[this.speedIndex];
 
-    // Day/night clock advances in real time (so the city feels alive even
-    // when the simulation is paused), faster at higher game speeds.
     this.renderer.timeOfDay = (this.renderer.timeOfDay + dt / this.dayLength * (0.5 + speed * 0.5)) % 1;
-    // Keep traffic populated relative to city size and animate it.
     this.traffic.sync(Math.round(this.sim.population / 12) + (this.sim.jobsC + this.sim.jobsI) / 20);
     if (speed > 0) this.traffic.update(dt * Math.min(speed, 2));
+
     if (speed > 0) {
       this.accum += dt * speed;
       while (this.accum >= CONFIG.TICK_MS) {
         this.accum -= CONFIG.TICK_MS;
         const res = this.sim.step();
+        this.renderer.syncBuildings(); // update grown buildings in 3D
         if (res.bankrupt && !this._warnedBankrupt) {
           this._warnedBankrupt = true;
           this.ui.toast('⚠ City is bankrupt! Cut services or raise population.');
@@ -135,7 +160,8 @@ class Game {
         }
       }
     }
-    this.renderer.draw(this.hover, this.tool);
+
+    this.renderer.draw(this.traffic);
     this.ui.update();
     requestAnimationFrame(tt => this.loop(tt));
   }
@@ -159,7 +185,7 @@ class Game {
       this.grid = Grid.deserialize(data.grid);
       this.sim = new Simulation(this.grid);
       this.sim.load(data.sim);
-      this.renderer.grid = this.grid;
+      this.renderer.setGrid(this.grid);
       this.traffic.setGrid(this.grid);
       if (!silent) this.ui.toast('City loaded');
       return true;
@@ -172,10 +198,8 @@ class Game {
   newCity() {
     this.grid = new Grid(CONFIG.GRID_W, CONFIG.GRID_H);
     this.sim = new Simulation(this.grid);
-    this.renderer.grid = this.grid;
+    this.renderer.setGrid(this.grid);
     this.traffic.setGrid(this.grid);
-    this.renderer.camX = this.grid.w * CONFIG.TILE * 0.5;
-    this.renderer.camY = this.grid.h * CONFIG.TILE * 0.5;
     this.ui.toast('New city founded');
   }
 }
