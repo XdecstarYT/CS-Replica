@@ -69,125 +69,205 @@ class ModelBuilder {
   _tex(key, fn) {
     if (this._texCache[key]) return this._texCache[key];
     const c = document.createElement('canvas');
-    c.width = c.height = 256;
-    fn(c.getContext('2d'), 256, 256);
+    c.width = c.height = 512;
+    fn(c.getContext('2d'), 512, 512);
     const t = new THREE.CanvasTexture(c);
-    t.anisotropy = 4;
+    t.anisotropy = 8;
     this._texCache[key] = t;
     return t;
   }
 
   _asphaltTex() {
     return this._tex('asphalt', (ctx, w, h) => {
-      ctx.fillStyle = '#232830';
+      ctx.fillStyle = '#1e242e';
       ctx.fillRect(0, 0, w, h);
-      // grain
-      for (let i = 0; i < 3000; i++) {
+      // coarse aggregate
+      for (let i = 0; i < 8000; i++) {
         const x = Math.random() * w, y = Math.random() * h;
-        const b = 25 + Math.floor(Math.random() * 20);
-        ctx.fillStyle = `rgb(${b},${b},${b+4})`;
-        ctx.fillRect(x, y, 1 + Math.random() * 2, 1 + Math.random() * 2);
+        const b = 28 + Math.floor(Math.random() * 24);
+        ctx.fillStyle = `rgb(${b},${b},${b + 3})`;
+        ctx.fillRect(x, y, 1 + Math.random() * 3, 1 + Math.random() * 3);
+      }
+      // fine noise overlay
+      for (let i = 0; i < 5000; i++) {
+        const x = Math.random() * w, y = Math.random() * h;
+        const b = 18 + Math.floor(Math.random() * 12);
+        ctx.fillStyle = `rgba(${b},${b},${b},0.5)`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+      // hairline cracks
+      ctx.strokeStyle = 'rgba(10,10,15,0.55)';
+      ctx.lineWidth = 0.8;
+      for (let k = 0; k < 6; k++) {
+        const sx = Math.random() * w, sy = Math.random() * h;
+        ctx.beginPath(); ctx.moveTo(sx, sy);
+        let cx = sx, cy = sy;
+        for (let s = 0; s < 5; s++) {
+          cx += (Math.random() - 0.5) * 60; cy += (Math.random() - 0.5) * 60;
+          ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
       }
     });
   }
 
   _brickTex() {
     return this._tex('brick', (ctx, w, h) => {
-      ctx.fillStyle = '#733520';
+      // mortar base
+      ctx.fillStyle = '#5a3820';
       ctx.fillRect(0, 0, w, h);
-      const bw = 32, bh = 14, gap = 3;
+      const bw = 52, bh = 22, gap = 5;
       for (let row = 0; row * (bh + gap) < h; row++) {
-        const ox = row % 2 === 0 ? 0 : bw / 2;
-        for (let col = -1; col * (bw + gap) < w; col++) {
-          const val = 36 + (Math.abs(col * 7 + row * 11)) % 16;
-          const sat = 40 + (col + row * 3) % 18;
-          ctx.fillStyle = `hsl(14,${sat}%,${val}%)`;
-          ctx.fillRect(ox + col * (bw + gap) + 1, row * (bh + gap) + 1, bw - 1, bh - 1);
+        const ox = row % 2 === 0 ? 0 : (bw + gap) / 2;
+        for (let col = -1; col * (bw + gap) < w + bw; col++) {
+          const seed = Math.abs(col * 13 + row * 17) % 32;
+          const hue = 12 + (seed % 6) - 3;
+          const sat = 42 + (seed % 14);
+          const lum = 30 + (seed % 14);
+          const bx = ox + col * (bw + gap), by = row * (bh + gap);
+          ctx.fillStyle = `hsl(${hue},${sat}%,${lum}%)`;
+          ctx.fillRect(bx + 1, by + 1, bw - 1, bh - 1);
+          // highlight edge (top-left)
+          ctx.fillStyle = `hsl(${hue},${sat - 8}%,${lum + 7}%)`;
+          ctx.fillRect(bx + 1, by + 1, bw - 1, 3);
+          ctx.fillRect(bx + 1, by + 1, 3, bh - 1);
+          // shadow edge (bottom-right)
+          ctx.fillStyle = `hsl(${hue},${sat}%,${lum - 10}%)`;
+          ctx.fillRect(bx + 1, by + bh - 3, bw - 1, 3);
+          ctx.fillRect(bx + bw - 4, by + 1, 3, bh - 1);
+          // surface grain flecks
+          for (let k = 0; k < 5; k++) {
+            const fx = bx + 3 + Math.random() * (bw - 6);
+            const fy = by + 3 + Math.random() * (bh - 6);
+            const fl = lum + Math.floor(Math.random() * 10) - 5;
+            ctx.fillStyle = `hsl(${hue},${sat - 10}%,${fl}%)`;
+            ctx.fillRect(fx, fy, 2, 2);
+          }
         }
       }
-      ctx.strokeStyle = '#4a1e10';
+      // deep mortar lines
+      ctx.strokeStyle = '#2e1508';
       ctx.lineWidth = gap;
       for (let row = 0; row * (bh + gap) < h + gap; row++) {
-        ctx.beginPath(); ctx.moveTo(0, row * (bh + gap)); ctx.lineTo(w, row * (bh + gap)); ctx.stroke();
+        const my = row * (bh + gap);
+        ctx.beginPath(); ctx.moveTo(0, my); ctx.lineTo(w, my); ctx.stroke();
       }
     });
   }
 
   _glassCurtainTex(cols, rows) {
     return this._tex(`glass_${cols}_${rows}`, (ctx, w, h) => {
-      ctx.fillStyle = '#0c1e3a';
+      ctx.fillStyle = '#080f22';
       ctx.fillRect(0, 0, w, h);
       const cw = w / cols, ch = h / rows;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          const lit = Math.random() > 0.20;
-          const hue = 200 + c * 5;
-          const lum = lit ? 28 + r % 5 * 4 : 8;
-          ctx.fillStyle = lit ? `hsl(${hue},55%,${lum}%)` : '#070f1e';
-          ctx.fillRect(c * cw + 2, r * ch + 2, cw - 4, ch - 4);
+          const lit = Math.random() > 0.18;
+          const hue = 196 + c * 7 + r * 2;
+          const lum = lit ? 24 + (r % 6) * 4 : 6;
+          const bx = c * cw + 2, by = r * ch + 2, bw2 = cw - 4, bh2 = ch - 4;
+          // base window colour
+          ctx.fillStyle = lit ? `hsl(${hue},60%,${lum}%)` : '#060e1c';
+          ctx.fillRect(bx, by, bw2, bh2);
           if (lit) {
-            ctx.fillStyle = 'rgba(140,200,255,0.22)';
-            ctx.fillRect(c * cw + 2, r * ch + 2, cw - 4, 5);
-            ctx.fillStyle = 'rgba(255,220,180,0.08)';
-            ctx.fillRect(c * cw + 2, r * ch + ch - 7, cw - 4, 5);
+            // sky reflection band
+            ctx.fillStyle = 'rgba(120,180,255,0.18)';
+            ctx.fillRect(bx, by, bw2, Math.max(3, bh2 * 0.28));
+            // warm interior glow at bottom
+            ctx.fillStyle = 'rgba(255,200,130,0.10)';
+            ctx.fillRect(bx, by + bh2 - Math.max(3, bh2 * 0.2), bw2, Math.max(3, bh2 * 0.2));
+            // specular glint top-left corner
+            ctx.fillStyle = 'rgba(200,230,255,0.38)';
+            ctx.fillRect(bx, by, Math.max(2, bw2 * 0.18), Math.max(2, bh2 * 0.12));
           }
         }
       }
-      ctx.strokeStyle = '#050c1a';
-      ctx.lineWidth = 2.5;
+      // frame mullions
+      ctx.strokeStyle = '#030a18';
+      ctx.lineWidth = 3;
       for (let r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(0, r*ch); ctx.lineTo(w, r*ch); ctx.stroke(); }
       for (let c = 0; c <= cols; c++) { ctx.beginPath(); ctx.moveTo(c*cw, 0); ctx.lineTo(c*cw, h); ctx.stroke(); }
+      // thin highlight on mullions
+      ctx.strokeStyle = 'rgba(100,150,220,0.15)';
+      ctx.lineWidth = 1;
+      for (let c = 0; c <= cols; c++) { ctx.beginPath(); ctx.moveTo(c*cw + 1, 0); ctx.lineTo(c*cw + 1, h); ctx.stroke(); }
     });
   }
 
   _corrugatedTex() {
     return this._tex('corrugated', (ctx, w, h) => {
-      ctx.fillStyle = '#5e5442';
+      ctx.fillStyle = '#524838';
       ctx.fillRect(0, 0, w, h);
-      for (let i = 0; i < w; i += 6) {
-        const t = Math.sin((i / w) * Math.PI * 42) * 0.5 + 0.5;
-        ctx.fillStyle = `hsl(35,16%,${27 + t * 16}%)`;
-        ctx.fillRect(i, 0, 6, h);
+      // corrugation ribs
+      for (let i = 0; i < w; i += 8) {
+        const t = Math.sin((i / w) * Math.PI * 34) * 0.5 + 0.5;
+        ctx.fillStyle = `hsl(33,18%,${24 + t * 18}%)`;
+        ctx.fillRect(i, 0, 8, h);
       }
-      ctx.fillStyle = '#3e3428';
-      for (let y = 20; y < h; y += 40) {
-        for (let x = 8; x < w; x += 22) {
-          ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      // horizontal seam lines
+      ctx.strokeStyle = 'rgba(20,14,8,0.55)';
+      ctx.lineWidth = 2;
+      for (let y = 64; y < h; y += 64) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      // rivet dots
+      ctx.fillStyle = '#2e2416';
+      for (let y = 32; y < h; y += 64) {
+        for (let x = 12; x < w; x += 28) {
+          ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
         }
+      }
+      // rust streaks running down from rivets
+      ctx.fillStyle = 'rgba(140,60,20,0.30)';
+      for (let x = 12; x < w; x += 56) {
+        for (let y = 32; y < h - 20; y += 64) {
+          ctx.fillRect(x - 2, y, 4, 28 + Math.random() * 30);
+        }
+      }
+      // surface scratches
+      ctx.strokeStyle = 'rgba(200,180,150,0.12)';
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 8; k++) {
+        const sx = Math.random() * w;
+        ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx + (Math.random()-0.5)*20, h); ctx.stroke();
       }
     });
   }
 
   _aiPanelTex() {
     return this._tex('aipanel', (ctx, w, h) => {
-      ctx.fillStyle = '#040a18';
+      ctx.fillStyle = '#030912';
       ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = '#002caa';
-      ctx.lineWidth = 1.2;
-      for (let i = 0; i < 14; i++) {
-        const y = (i / 14) * h;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w * 0.20, y);
-        ctx.lineTo(w * 0.20 + 10, y + 9); ctx.lineTo(w, y + 9); ctx.stroke();
+      ctx.strokeStyle = '#001888';
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 18; i++) {
+        const y = (i / 18) * h;
+        ctx.beginPath(); ctx.moveTo(0, y);
+        ctx.lineTo(w * 0.22, y); ctx.lineTo(w * 0.22 + 14, y + 12); ctx.lineTo(w, y + 12); ctx.stroke();
       }
-      for (let r = 0; r < 8; r++) for (let c = 0; c < 6; c++) {
+      for (let r = 0; r < 10; r++) for (let c = 0; c < 8; c++) {
         const on = Math.random() > 0.35;
-        ctx.fillStyle = on ? (r % 3 === 0 ? '#00ffcc' : '#0077ff') : '#001422';
-        ctx.beginPath(); ctx.arc(18 + c * 40, 14 + r * 30, 4.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = on ? (r % 3 === 0 ? '#00ffcc' : '#0088ff') : '#000c1a';
+        ctx.beginPath(); ctx.arc(20 + c * 60, 18 + r * 46, 6, 0, Math.PI * 2); ctx.fill();
       }
     });
   }
 
   _slateRoofTex() {
     return this._tex('slate', (ctx, w, h) => {
-      ctx.fillStyle = '#3c2e2e';
+      ctx.fillStyle = '#2e2424';
       ctx.fillRect(0, 0, w, h);
-      const sh = 20, sw = 28;
+      const sh = 30, sw = 42;
       for (let row = 0; row < Math.ceil(h / sh); row++) {
         const ox = row % 2 === 0 ? 0 : sw / 2;
         for (let col = -1; col < Math.ceil(w / sw) + 1; col++) {
-          const l = 22 + (Math.abs(col * 3 + row * 7)) % 10;
-          ctx.fillStyle = `hsl(0,10%,${l}%)`;
+          const seed = Math.abs(col * 5 + row * 11) % 16;
+          const l = 18 + seed % 12;
+          ctx.fillStyle = `hsl(0,8%,${l}%)`;
           ctx.fillRect(ox + col * sw + 1, row * sh + 1, sw - 2, sh - 2);
+          // highlight along top edge
+          ctx.fillStyle = `hsl(0,6%,${l + 6}%)`;
+          ctx.fillRect(ox + col * sw + 1, row * sh + 1, sw - 2, 3);
         }
       }
     });
@@ -195,26 +275,53 @@ class ModelBuilder {
 
   _concreteTex() {
     return this._tex('concrete', (ctx, w, h) => {
-      ctx.fillStyle = '#7a7872';
+      ctx.fillStyle = '#72706a';
       ctx.fillRect(0, 0, w, h);
-      for (let i = 0; i < 4000; i++) {
+      // coarse pebble noise
+      for (let i = 0; i < 10000; i++) {
         const x = Math.random() * w, y = Math.random() * h;
-        const v = 100 + Math.floor(Math.random() * 30);
-        ctx.fillStyle = `rgb(${v},${v},${v-4})`;
-        ctx.fillRect(x, y, Math.random() * 3, Math.random() * 3);
+        const v = 95 + Math.floor(Math.random() * 35);
+        ctx.fillStyle = `rgba(${v},${v},${v - 3},0.7)`;
+        ctx.fillRect(x, y, 1 + Math.random() * 2.5, 1 + Math.random() * 2.5);
+      }
+      // formwork panel lines
+      ctx.strokeStyle = 'rgba(40,38,34,0.35)';
+      ctx.lineWidth = 1.5;
+      for (let y = 80; y < h; y += 80) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      for (let x = 120; x < w; x += 120) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
       }
     });
   }
 
   _grassTex() {
     return this._tex('grass', (ctx, w, h) => {
-      ctx.fillStyle = '#2d5a20';
+      // base soil
+      ctx.fillStyle = '#253d18';
       ctx.fillRect(0, 0, w, h);
+      // dirt patches
+      for (let k = 0; k < 8; k++) {
+        const px = Math.random() * w, py = Math.random() * h;
+        const pr = 20 + Math.random() * 40;
+        const grd = ctx.createRadialGradient(px, py, 0, px, py, pr);
+        grd.addColorStop(0, 'rgba(80,52,24,0.55)');
+        grd.addColorStop(1, 'rgba(80,52,24,0)');
+        ctx.fillStyle = grd; ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+      }
+      // coarse grass tufts — 3 shades
+      const palette = ['#1e5014','#2a6018','#34741e','#3a8224','#285616','#4a8830'];
+      for (let i = 0; i < 7000; i++) {
+        const x = Math.random() * w, y = Math.random() * h;
+        ctx.fillStyle = palette[Math.floor(Math.random() * palette.length)];
+        ctx.fillRect(x, y, 2, 3 + Math.random() * 5);
+      }
+      // fine bright highlights
       for (let i = 0; i < 2000; i++) {
         const x = Math.random() * w, y = Math.random() * h;
-        const g = 38 + Math.floor(Math.random() * 22);
-        ctx.fillStyle = `rgb(${g - 8},${g + 10},${g - 14})`;
-        ctx.fillRect(x, y, 2, 3 + Math.random() * 4);
+        ctx.fillStyle = 'rgba(120,200,60,0.12)';
+        ctx.fillRect(x, y, 1, 2);
       }
     });
   }

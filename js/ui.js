@@ -26,6 +26,7 @@ class UI {
       aiScore: document.getElementById('ai-score'),
       aiScoreFill: document.getElementById('ai-score-fill'),
       aiBriefing: document.getElementById('ai-briefing'),
+      aiExtras: document.getElementById('ai-extras'),
       aiInsights: document.getElementById('ai-insights'),
     };
     this.toastTimer = null;
@@ -88,12 +89,74 @@ class UI {
     const ai = this.game.ai;
     if (!ai) return;
     const r = ai.analyze();
+    const sim = this.game.sim;
+
+    // Grade + score
     this.el.aiGradeBadge.textContent = r.grade;
     this.el.aiGradeBadge.dataset.grade = r.grade;
     this.el.aiScore.textContent = r.score;
     this.el.aiScoreFill.style.width = r.score + '%';
-    this.el.aiBriefing.textContent = r.briefing;
 
+    // Briefing with stage badge
+    const stageLabel = { early: 'Early City', growth: 'Growth', mature: 'Mature City' }[r.stage] || '';
+    this.el.aiBriefing.innerHTML = `<span class="ai-stage ${r.stage}">${stageLabel}</span> ${r.briefing}`;
+
+    // ── Dynamic extras ──
+    const extras = this.el.aiExtras;
+    extras.innerHTML = '';
+
+    // Budget runway
+    const fc = r.forecast;
+    if (fc.bankruptIn !== null) {
+      const danger = fc.bankruptIn <= 8, warn = fc.bankruptIn <= 20;
+      const el = document.createElement('div');
+      el.className = `ai-runway${danger ? ' danger' : warn ? ' warn' : ''}`;
+      el.innerHTML = `⏳ Runway: <b>~${fc.bankruptIn} wk</b> &nbsp;(${this.fmtMoney(sim.money)} at ${this.fmtMoney(sim.lastBalance)}/wk)`;
+      extras.appendChild(el);
+    } else if (sim.money >= 0) {
+      const el = document.createElement('div');
+      el.className = 'ai-runway';
+      const bal = sim.lastBalance;
+      el.innerHTML = `💰 Treasury: <b>${this.fmtMoney(sim.money)}</b> &nbsp;${bal >= 0 ? '+' : ''}${this.fmtMoney(bal)}/wk`;
+      extras.appendChild(el);
+    }
+
+    // Forecast cards
+    const fRow = document.createElement('div');
+    fRow.className = 'ai-forecast';
+    const popUp = fc.popSlope >= 0, monUp = fc.avgBalance >= 0;
+    const avgBal = Math.round(fc.avgBalance);
+    fRow.innerHTML =
+      `<div class="ai-fc-card ${popUp ? 'up' : 'dn'}">` +
+        `<b>${popUp ? '+' : ''}${fc.popSlope.toFixed(1)}/wk</b>Pop trend</div>` +
+      `<div class="ai-fc-card">` +
+        `<b>${fc.pop10.toLocaleString()}</b>10-wk forecast</div>` +
+      `<div class="ai-fc-card ${monUp ? 'up' : 'dn'}">` +
+        `<b>${monUp ? '+' : ''}${this.fmtMoney(avgBal).replace(/^-/, '')}</b>Avg balance</div>`;
+    extras.appendChild(fRow);
+
+    // Zone ratio bar
+    if (r.ratio) {
+      const { r: rr, c, i } = r.ratio;
+      const rPct = Math.round(rr * 100), cPct = Math.round(c * 100), iPct = Math.round(i * 100);
+      const el = document.createElement('div');
+      el.className = 'ai-ratio';
+      el.innerHTML =
+        `<div class="ai-ratio-title">Zone mix — ideal R 50 · C 30 · I 20</div>` +
+        `<div class="ai-ratio-bar">` +
+          `<div class="ai-ratio-seg r" style="width:${rPct}%">${rPct > 14 ? rPct + '%' : ''}</div>` +
+          `<div class="ai-ratio-seg c" style="width:${cPct}%">${cPct > 14 ? cPct + '%' : ''}</div>` +
+          `<div class="ai-ratio-seg i" style="width:${iPct}%">${iPct > 14 ? iPct + '%' : ''}</div>` +
+        `</div>` +
+        `<div class="ai-ratio-legend">` +
+          `<span style="color:var(--good)">■ Res ${rPct}%</span>` +
+          `<span style="color:var(--accent)">■ Com ${cPct}%</span>` +
+          `<span style="color:var(--warn)">■ Ind ${iPct}%</span>` +
+        `</div>`;
+      extras.appendChild(el);
+    }
+
+    // Insights
     const host = this.el.aiInsights;
     host.innerHTML = '';
     for (const ins of r.insights) {
