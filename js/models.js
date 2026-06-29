@@ -337,6 +337,48 @@ class ModelBuilder {
     }
   }
 
+  // Give a box body genuine 3-D relief so it stops reading as a flat painted
+  // cube: corner pilasters, horizontal floor bands, a projecting cornice and a
+  // recessed parapet, and (for prominent towers) projecting vertical fins that
+  // turn the glazed face into a recessed "egg-crate". Geometry is the shared
+  // unit-box scaled per piece, so this stays cheap. `opts`: {cx,cz,y0,fins}.
+  _reliefBody(group, w, d, h, hash, kind, opts) {
+    opts = opts || {};
+    const cx = opts.cx || 0, cz = opts.cz || 0, y0 = opts.y0 || 0;
+    const metal = kind === 'glass' || kind === 'office';
+    const frameMat = metal ? this.matSpire : this.matConc;
+    const hw = w / 2, hd = d / 2, midY = y0 + h / 2;
+    // corner pilasters
+    const pw = 0.05;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
+      group.add(this._kmesh(this.kit.box, frameMat, pw, h, pw, cx + sx * hw, midY, cz + sz * hd, false));
+    // horizontal floor bands
+    const bands = Math.max(1, Math.min(5, Math.round(h / 0.6)));
+    for (let b = 1; b <= bands; b++)
+      group.add(this._kmesh(this.kit.box, this.matConc, w + 0.02, 0.022, d + 0.02, cx, y0 + (h * b) / (bands + 1), cz, false));
+    // projecting cornice + recessed parapet upstand
+    group.add(this._kmesh(this.kit.box, this.matConc, w + 0.06, 0.05, d + 0.06, cx, y0 + h - 0.025, cz, false));
+    group.add(this._kmesh(this.kit.box, frameMat, w - 0.04, 0.07, d - 0.04, cx, y0 + h + 0.03, cz, false));
+    // projecting vertical fins
+    if (opts.fins) {
+      const proj = 0.02;
+      const nx = Math.max(2, Math.min(4, Math.round(w / 0.22)));
+      for (let s = 1; s <= nx; s++) {
+        const x = cx - hw + (w * s) / (nx + 1);
+        group.add(this._kmesh(this.kit.box, frameMat, 0.02, h, proj, x, midY, cz + hd, false));
+        group.add(this._kmesh(this.kit.box, frameMat, 0.02, h, proj, x, midY, cz - hd, false));
+      }
+      if (metal) {
+        const nz = Math.max(2, Math.min(4, Math.round(d / 0.22)));
+        for (let s = 1; s <= nz; s++) {
+          const z = cz - hd + (d * s) / (nz + 1);
+          group.add(this._kmesh(this.kit.box, frameMat, proj, h, 0.02, cx + hw, midY, z, false));
+          group.add(this._kmesh(this.kit.box, frameMat, proj, h, 0.02, cx - hw, midY, z, false));
+        }
+      }
+    }
+  }
+
   // ─────── Canvas textures ───────
 
   _tex(key, fn) {
@@ -936,10 +978,12 @@ class ModelBuilder {
         group.add(this._kmesh(this.kit.box, fac, fw, h, fw * 0.6, -fw * 0.12, h / 2, fz - fw * 0.3));
         group.add(this._kmesh(this.kit.box, fac, fw * 0.55, h, fw * 0.5, fw * 0.32, h / 2, -fw * 0.2));
         this._capRoof(group, fw, fw * 0.6, h); this._capRoof(group, fw * 0.55, fw * 0.5, h);
+        this._reliefBody(group, fw, fw * 0.6, h, hash, 'resi', { cx: -fw * 0.12, cz: fz - fw * 0.3 });
       } else if (shape === 1) {
         // slab
         group.add(this._kmesh(this.kit.box, fac, fw, h, fw * 0.62, 0, h / 2, 0));
         this._capRoof(group, fw, fw * 0.62, h);
+        this._reliefBody(group, fw, fw * 0.62, h, hash, 'resi');
       } else if (shape === 2) {
         // U-shape around a rear courtyard (back wing + two side wings)
         const wing = fw * 0.3;
@@ -948,9 +992,11 @@ class ModelBuilder {
         group.add(this._kmesh(this.kit.box, fac, wing, h, fw * 0.74, fz - wing / 2, h / 2, fw * 0.06));
         this._capRoof(group, fw, wing, h);
         this._capRoof(group, wing, fw * 0.74, h); this._capRoof(group, wing, fw * 0.74, h);
+        this._reliefBody(group, fw, wing, h, hash, 'resi', { cz: -fz + wing / 2 });
       } else {
         group.add(this._kmesh(this.kit.box, fac, fw, h, fw, 0, h / 2, 0));
         this._capRoof(group, fw, fw, h);
+        this._reliefBody(group, fw, fw, h, hash, 'resi');
       }
       this._balconies(group, fw, fw, h, 2, fz);
       this._rooftop(group, fw, fw, h, hash, false);
@@ -964,6 +1010,7 @@ class ModelBuilder {
         const th = t === 0 ? h * 0.5 : (h * 0.5 / (tiers - 1));
         group.add(this._kmesh(this.kit.box, fac, cw, th, cd, 0, y0 + th / 2, 0));
         if (t > 0) group.add(this._kmesh(this.kit.box, this.matConc, cw + 0.05, 0.025, cd + 0.05, 0, y0 + 0.012, 0, false));
+        this._reliefBody(group, cw, cd, th, hash + t, 'resi', { y0, fins: t === 0 });
         y0 += th; cw *= 0.82; cd *= 0.82;
       }
       this._capRoof(group, cw, cd, y0);
@@ -1007,6 +1054,7 @@ class ModelBuilder {
       const fac = this._zoneFacade(TILE.ZONE_COM, 2, hash);
       group.add(this._kmesh(this.kit.box, fac, fw, h, fw, 0, h / 2, 0));
       this._capRoof(group, fw, fw, h);
+      this._reliefBody(group, fw, fw, h, hash, 'office');
       this._storefront(group, fw, h, fz, hash);
       // awning over the shopfront
       const aw = this._kmesh(this.kit.box, this.signMats[(hash >> 2) % this.signMats.length], fw * 0.88, 0.016, 0.16, 0, h * 0.5, fz + 0.06, false);
@@ -1026,6 +1074,7 @@ class ModelBuilder {
       const slim = (hash & 1) ? 0.86 : 1.0;
       group.add(this._kmesh(this.kit.box, fac, fw * slim, towerH, fw, 0, podH + towerH / 2, 0));
       this._capRoof(group, fw * slim, fw, h);
+      this._reliefBody(group, fw * slim, fw, towerH, hash, 'office', { y0: podH, fins: true });
       this._rooftop(group, fw * slim, fw, h, hash, true);
       this._storefront(group, fw, podH, fz, hash);
       group._windowMats = [fac];
@@ -1066,6 +1115,7 @@ class ModelBuilder {
         const tier = tiers[ti];
         group.add(this._kmesh(this.kit.box, fac, tier.w, tier.th, tier.w, 0, yOff + tier.th / 2, 0));
         if (yOff > 0) group.add(this._kmesh(this.kit.box, this.matConc, tier.w + 0.06, 0.028, tier.w + 0.06, 0, yOff + 0.014, 0, false));
+        if (ti < 2) this._reliefBody(group, tier.w, tier.w, tier.th, hash + ti, 'glass', { y0: yOff, fins: ti === 0 });
         yOff += tier.th;
       }
       const topW = tiers[2].w;
@@ -1089,6 +1139,7 @@ class ModelBuilder {
         const th = (h - podH) / tiers;
         group.add(this._kmesh(this.kit.box, fac, cw, th, cd, 0, y0 + th / 2, 0));
         if (t > 0) group.add(this._kmesh(this.kit.box, this.matConc, cw + 0.04, 0.022, cd + 0.04, 0, y0 + 0.011, 0, false));
+        this._reliefBody(group, cw, cd, th, hash + t, 'glass', { y0, fins: t === 0 });
         y0 += th; cw *= 0.88; cd *= 0.88;
       }
       this._capRoof(group, cw, cd, y0);
@@ -1122,6 +1173,7 @@ class ModelBuilder {
       const th = shaftH / tiers;
       group.add(this._kmesh(this.kit.box, fac, cw, th, cd, 0, y0 + th / 2, 0));
       group.add(this._kmesh(this.kit.box, this.matConc, cw + 0.05, 0.024, cd + 0.05, 0, y0 + 0.012, 0, false));
+      if (t < 2) this._reliefBody(group, cw, cd, th, hash + t, 'glass', { y0, fins: t === 0 });
       if (t === tiers - 2) { // observation deck — cantilevered glazed band + rail
         group.add(this._kmesh(this.kit.box, this.matDeck, cw + 0.12, th * 0.4, cd + 0.12, 0, y0 + th * 0.5, 0, false));
         group.add(this._kmesh(this.kit.box, this.matSpire, cw + 0.14, 0.02, cd + 0.14, 0, y0 + th * 0.72, 0, false));
