@@ -101,7 +101,10 @@ class Simulation {
       if (g.level[i] < wantLevel && Math.random() < 0.5 + dem * 0.4) g.level[i]++;
       else if (g.level[i] > wantLevel && Math.random() < 0.25) g.level[i]--;
 
-      const cap = (BUILDING_LEVELS[t][g.level[i]] || { cap: 0 }).cap;
+      // Capacity comes from the *constructed* level — population only moves in
+      // once the building (or its next storey) has actually finished building.
+      const builtLevel = g.built ? g.built[i] : g.level[i];
+      const cap = (BUILDING_LEVELS[t][builtLevel] || { cap: 0 }).cap;
       // occupancy eases toward capacity scaled by quality, policy + economy growth.
       const pmG = this.policyMods ? (this.policyMods.growthMult ?? 1) : 1;
       const ecG = this.econMods   ? (this.econMods.growthMult ?? 1)   : 1;

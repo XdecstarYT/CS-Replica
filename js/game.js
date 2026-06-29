@@ -7,6 +7,7 @@ class Game {
     this.renderer = new Renderer3D(document.getElementById('city-canvas'), this.grid);
     this.traffic  = new Traffic(this.grid);
     this.citizens = new Citizens(this.grid);
+    this.construction = new Construction(this);
     this.ai = new CityAI(this);
     this.gov = new Government(this);
     this.economy = new Economy(this);
@@ -16,6 +17,7 @@ class Game {
     this.politicsUI = new PoliticsUI(this);
     this.statsUI = new StatsUI(this);
     this.renderer.weatherSys = this.weather;   // renderer reads weather for sky/precip
+    this.renderer.construction = this.construction; // renderer reads build-site state
     this.dayLength = 90000; // ms per full day/night cycle (real time)
 
     this.tool = 'select';
@@ -128,8 +130,10 @@ class Game {
 
   _clearTile(i) {
     this.grid.level[i] = 0;
+    if (this.grid.built) this.grid.built[i] = 0;
     this.grid.pop[i] = 0;
     this.grid.service[i] = null;
+    if (this.construction) this.construction.projects.delete(i);
     if (this.grid.type[i] !== TILE.WATER) this.grid.type[i] = TILE.GRASS;
   }
 
@@ -164,7 +168,8 @@ class Game {
       while (this.accum >= CONFIG.TICK_MS) {
         this.accum -= CONFIG.TICK_MS;
         const res = this.sim.step();
-        this.renderer.syncBuildings(); // update grown buildings in 3D
+        this.construction.tick();      // advance staged build projects
+        this.renderer.syncBuildings(); // update grown buildings / live sites in 3D
 
         // ── ARIA: observe, analyse periodically, nudge, refresh overlays ──
         this.ai.observe();
@@ -204,7 +209,8 @@ class Game {
       const data = {
         grid: this.grid.serialize(), sim: this.sim.serialize(), gov: this.gov.serialize(),
         economy: this.economy.serialize(), weather: this.weather.serialize(), stats: this.stats.serialize(),
-        v: 2,
+        construction: this.construction.serialize(),
+        v: 3,
       };
       localStorage.setItem(CONFIG.AUTOSAVE_KEY, JSON.stringify(data));
       if (!silent) this.ui.toast('City saved');
@@ -221,6 +227,10 @@ class Game {
       this.grid = Grid.deserialize(data.grid);
       this.sim = new Simulation(this.grid);
       this.sim.load(data.sim);
+      // Restore in-progress construction before the renderer rebuilds the scene,
+      // so live build-sites are drawn straight away.
+      this.construction.setGrid(this.grid);
+      if (data.construction) this.construction.load(data.construction);
       this.renderer.setGrid(this.grid);
       this.traffic.setGrid(this.grid);
       this.citizens.setGrid(this.grid);
@@ -242,6 +252,7 @@ class Game {
   newCity() {
     this.grid = new Grid(CONFIG.GRID_W, CONFIG.GRID_H);
     this.sim = new Simulation(this.grid);
+    this.construction.setGrid(this.grid);
     this.renderer.setGrid(this.grid);
     this.traffic.setGrid(this.grid);
     this.citizens.setGrid(this.grid);

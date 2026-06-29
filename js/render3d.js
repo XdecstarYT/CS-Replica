@@ -47,6 +47,8 @@ class Renderer3D {
     this.timeOfDay = 0.35;
     this.nightFactor = 0;
     this.overlayMode = null;
+    this.construction = null;       // set by Game; drives staged build-site visuals
+    this._bldSig = null;            // per-tile visual signature cache (built level / construction stage)
     this._winDirty = true;
     this._lastWin = -1;
     this.weatherSys = null;        // set by Game; drives sky/fog/precipitation
@@ -395,14 +397,18 @@ class Renderer3D {
     }
 
     if (t === TILE.ZONE_RES || t === TILE.ZONE_COM || t === TILE.ZONE_IND) {
-      const lvl = g.level[i];
+      const built = g.built ? g.built[i] : g.level[i];
+      const proj = this.construction && this.construction.projectAt(i);
       let mesh;
-      if (lvl === 0) {
+      if (proj && proj.stage < 1) {
+        mesh = this.models.buildConstructionSite(t, T, proj.target, proj.stage, this.models._hash(x, y));
+        mesh.position.set(cx, 0, cz);
+      } else if (built === 0) {
         mesh = this._buildZoneMarker(cx, cz, T, t);
       } else {
-        mesh = this._buildBuilding(x, y, cx, cz, T, t, lvl);
+        mesh = this._buildBuilding(x, y, cx, cz, T, t, built);
       }
-      mesh._zoneLevel = lvl;
+      mesh._zoneLevel = built;
       this.scene.add(mesh);
       this.tileMeshes.set(key, mesh);
       this._winDirty = true;
@@ -593,18 +599,43 @@ class Renderer3D {
         if (t !== TILE.GRASS && t !== TILE.WATER) this.updateTile(x, y);
       }
     }
+    this._snapshotSigs();   // signatures now match what was just drawn
     this._winDirty = true;
   }
 
-  // Call each simulation tick — rebuild only tiles whose level changed.
-  syncBuildings() {
+  // A tile's visual signature: its finished built-level, or — while a
+  // construction project is live — its target level + current build stage, so
+  // sites are re-drawn only when they cross a stage boundary (cheap).
+  _tileSig(i) {
     const g = this.grid;
+    const built = g.built ? g.built[i] : g.level[i];
+    const proj = this.construction && this.construction.projectAt(i);
+    return (proj && proj.stage < 1)
+      ? 1000 + proj.target * 10 + this.construction.stageIndex(proj.stage)
+      : built;
+  }
+
+  // Record the current signatures without re-rendering (visuals assumed fresh,
+  // e.g. right after rebuildAll).
+  _snapshotSigs() {
+    const g = this.grid;
+    if (!this._bldSig || this._bldSig.length !== g.type.length) this._bldSig = new Int32Array(g.type.length);
     for (let i = 0; i < g.type.length; i++) {
       const t = g.type[i];
-      if (t !== TILE.ZONE_RES && t !== TILE.ZONE_COM && t !== TILE.ZONE_IND) continue;
-      const lvl = g.level[i];
-      if (this.levelCache[i] !== lvl) {
-        this.levelCache[i] = lvl;
+      this._bldSig[i] = (t === TILE.ZONE_RES || t === TILE.ZONE_COM || t === TILE.ZONE_IND) ? this._tileSig(i) : -999;
+    }
+  }
+
+  // Call each simulation tick — rebuild only tiles whose visual state changed.
+  syncBuildings() {
+    const g = this.grid;
+    if (!this._bldSig || this._bldSig.length !== g.type.length) { this._snapshotSigs(); return; }
+    for (let i = 0; i < g.type.length; i++) {
+      const t = g.type[i];
+      if (t !== TILE.ZONE_RES && t !== TILE.ZONE_COM && t !== TILE.ZONE_IND) { this._bldSig[i] = -999; continue; }
+      const sig = this._tileSig(i);
+      if (this._bldSig[i] !== sig) {
+        this._bldSig[i] = sig;
         this.updateTile(i % g.w, (i / g.w) | 0);
       }
     }
@@ -789,6 +820,7 @@ class Renderer3D {
       if (grp._ring2Mat)    grp._ring2Mat.opacity = ring2Op;
       if (grp._ledRingMat)  grp._ledRingMat.opacity = ledRingOp;
       if (grp._windTurbine) grp._windTurbine.rotation.z = tm * 1.4;
+      if (grp._craneJib)    grp._craneJib.rotation.y = tm * 0.3;
       if (grp._beacon)      grp._beacon.material.color.setHex(beaconCol);
     }
   }

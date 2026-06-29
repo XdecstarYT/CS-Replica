@@ -6,7 +6,8 @@ class Grid {
     this.h = h;
     const n = w * h;
     this.type = new Uint8Array(n);     // TILE.*
-    this.level = new Uint8Array(n);    // building level (0..3) for zoned tiles
+    this.level = new Uint8Array(n);    // target building level (0..3) for zoned tiles
+    this.built = new Uint8Array(n);    // physically constructed level (lags `level` while building)
     this.service = new Array(n).fill(null); // service id string on SERVICE tiles
     this.pop = new Uint16Array(n);     // residents/jobs occupying this tile
     // per-tile cached coverage flags (recomputed by simulation)
@@ -66,6 +67,7 @@ class Grid {
       w: this.w, h: this.h,
       type: Array.from(this.type),
       level: Array.from(this.level),
+      built: Array.from(this.built),
       service: this.service,
       pop: Array.from(this.pop),
     };
@@ -77,6 +79,8 @@ class Grid {
     const n = g.w * g.h;
     g.type = Uint8Array.from(data.type);
     g.level = Uint8Array.from(data.level);
+    // Older saves predate staged construction: treat existing buildings as already built.
+    g.built = data.built ? Uint8Array.from(data.built) : Uint8Array.from(data.level);
     g.service = data.service || new Array(n).fill(null);
     g.pop = Uint16Array.from(data.pop);
     g.power = new Uint8Array(n);

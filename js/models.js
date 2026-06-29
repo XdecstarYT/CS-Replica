@@ -105,6 +105,14 @@ class ModelBuilder {
     this.matSolar      = Std({ color: 0x16263f, roughness: 0.22, metalness: 0.55 });
     this.matDeck       = Std({ color: 0x223040, roughness: 0.12, metalness: 0.3, transparent: true, opacity: 0.6 });
 
+    // Construction-site materials.
+    this.matSiteConc   = Std({ color: 0x9a988e, roughness: 0.95, metalness: 0.02 });
+    this.matRebar      = Std({ color: 0x8a8d92, roughness: 0.6, metalness: 0.5 });
+    this.matScaffold   = Std({ color: 0xc9a227, roughness: 0.5, metalness: 0.45 });
+    this.matCrane      = Std({ color: 0xe0a020, roughness: 0.45, metalness: 0.5 });
+    this.matFence      = Std({ color: 0xd8661a, roughness: 0.7, metalness: 0.1 });
+    this.matSiteWrap   = Std({ color: 0x5a6470, roughness: 0.6, metalness: 0.1, transparent: true, opacity: 0.5 });
+
     // Self-lit shop signage (a small palette, picked per building).
     this.signMats = [
       Std({ color: 0xff5566, roughness: 0.4, emissive: new THREE.Color(0x551018) }),
@@ -1129,6 +1137,134 @@ class ModelBuilder {
     beacon._isBeacon = true; beacon.position.y = y0 + H * 0.18 + 0.01; group.add(beacon);
     group._beacon = beacon;
     this._rooftop(group, cw, cd, y0, hash, false);
+  }
+
+  // ─────── Construction site (multi-stage) ───────
+
+  // Representative final height for a zone/level (no per-tile noise).
+  _approxHeight(zone, level) {
+    const base = { [TILE.ZONE_RES]: [0, 0.42, 1.40, 3.40], [TILE.ZONE_COM]: [0, 0.55, 2.00, 6.00], [TILE.ZONE_IND]: [0, 0.60, 1.00, 1.60] };
+    const vary = { [TILE.ZONE_RES]: [0, 0.12, 0.50, 1.60], [TILE.ZONE_COM]: [0, 0.15, 0.80, 3.00], [TILE.ZONE_IND]: [0, 0.15, 0.30, 0.50] };
+    return base[zone][level] + vary[zone][level] * 0.5;
+  }
+
+  // A live construction site: a structural frame that rises with progress,
+  // wrapped in scaffolding, served by an animated tower crane. `stage` is 0..1.
+  buildConstructionSite(zone, T, target, stage, hash) {
+    const group = new THREE.Group();
+    const R = this._rng(hash ^ 0x51ed2701);
+    const fw = T * 0.82;
+    const Hfull = this._approxHeight(zone, target);
+    // Structure rises through the framing phase, finishing in the last 15%.
+    const grow = Math.min(1, stage / 0.85);
+    const builtH = Math.max(0.1, Hfull * grow);
+
+    // Foundation pad + footing
+    group.add(this._kmesh(this.kit.box, this.matSiteConc, fw * 1.06, 0.05, fw * 1.06, 0, 0.025, 0, false));
+    group.add(this._kmesh(this.kit.box, this.matRoofDeck, fw * 1.12, 0.02, fw * 1.12, 0, 0.01, 0, false));
+
+    // Hazard fencing while the site is open at ground level
+    if (stage < 0.55) this._siteFence(group, fw);
+
+    if (stage < 0.18) {
+      // Site preparation: excavation pit + earth-moving vehicle, no frame yet.
+      group.add(this._kmesh(this.kit.box, this.matRoofDeck, fw * 0.7, 0.04, fw * 0.7, 0, 0.04, 0, false));
+      const dozer = this._siteVehicle(hash);
+      dozer.position.set((R() - 0.5) * fw * 0.3, 0.02, fw * 0.18);
+      dozer.rotation.y = R() * Math.PI;
+      group.add(dozer);
+    } else {
+      // Structural frame: corner columns + floor slabs up to the built height.
+      for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        group.add(this._kmesh(this.kit.cyl8, this.matRebar, 0.02, builtH, 0.02, sx * fw * 0.42, builtH / 2, sz * fw * 0.42));
+      }
+      const floors = Math.max(1, Math.round(builtH / 0.34));
+      for (let f = 1; f <= floors; f++) {
+        const fy = f * (builtH / floors);
+        group.add(this._kmesh(this.kit.box, this.matSiteConc, fw * 0.9, 0.03, fw * 0.9, 0, fy, 0, false));
+      }
+      // Core
+      group.add(this._kmesh(this.kit.box, this.matSiteConc, fw * 0.3, builtH, fw * 0.3, 0, builtH / 2, 0, false));
+
+      // Partial facade climbing from the base once we hit the cladding phase.
+      if (stage > 0.7) {
+        const fac = this._zoneFacade(zone, target, hash);
+        const clad = builtH * Math.min(1, (stage - 0.7) / 0.3);
+        group.add(this._kmesh(this.kit.box, fac, fw, Math.max(0.1, clad), fw, 0, clad / 2, 0));
+        group._windowMats = [fac];
+        // shrink-wrap sheeting on the still-bare upper floors
+        if (clad < builtH - 0.05) group.add(this._kmesh(this.kit.box, this.matSiteWrap, fw * 1.01, builtH - clad, fw * 1.01, 0, clad + (builtH - clad) / 2, 0, false));
+      } else if (stage > 0.35) {
+        // bare-frame sheeting wrap
+        group.add(this._kmesh(this.kit.box, this.matSiteWrap, fw * 1.01, builtH, fw * 1.01, 0, builtH / 2, 0, false));
+      }
+
+      // Scaffolding lattice around the perimeter
+      this._scaffold(group, fw, builtH);
+    }
+
+    // Tower crane beside the structure (animated jib)
+    this._crane(group, fw, Math.max(Hfull, builtH) + 0.3, hash);
+
+    return group;
+  }
+
+  _siteFence(group, fw) {
+    const h = 0.08, e = fw * 0.58;
+    for (const [sw, sd, x, z] of [[e * 2, 0.012, 0, e], [e * 2, 0.012, 0, -e], [0.012, e * 2, e, 0], [0.012, e * 2, -e, 0]]) {
+      group.add(this._kmesh(this.kit.box, this.matFence, sw, h, sd, x, h / 2, z, false));
+    }
+  }
+
+  _scaffold(group, fw, h) {
+    const m = this.matScaffold, e = fw * 0.52;
+    // vertical poles at the four mid-edges + corners
+    const posts = [[-e, -e], [e, -e], [-e, e], [e, e], [0, e], [0, -e], [e, 0], [-e, 0]];
+    for (const [x, z] of posts) group.add(this._kmesh(this.kit.cyl8, m, 0.008, h, 0.008, x, h / 2, z, false));
+    // horizontal rails every ~0.4 up the front and sides
+    const rings = Math.max(1, Math.round(h / 0.4));
+    for (let r = 1; r <= rings; r++) {
+      const ry = r * (h / (rings + 1));
+      group.add(this._kmesh(this.kit.box, m, e * 2, 0.006, 0.006, 0, ry, e, false));
+      group.add(this._kmesh(this.kit.box, m, e * 2, 0.006, 0.006, 0, ry, -e, false));
+      group.add(this._kmesh(this.kit.box, m, 0.006, 0.006, e * 2, e, ry, 0, false));
+      group.add(this._kmesh(this.kit.box, m, 0.006, 0.006, e * 2, -e, ry, 0, false));
+    }
+  }
+
+  _crane(group, fw, topH, hash) {
+    const m = this.matCrane;
+    const bx = fw * 0.6, bz = -fw * 0.5;
+    const mastH = topH + 0.4;
+    // mast (lattice approximated by a slim box) + base
+    group.add(this._kmesh(this.kit.box, this.matRoofDeck, 0.1, 0.04, 0.1, bx, 0.02, bz, false));
+    group.add(this._kmesh(this.kit.box, m, 0.035, mastH, 0.035, bx, mastH / 2, bz, false));
+    // slewing jib group (animated by the renderer)
+    const jib = new THREE.Group();
+    jib.position.set(bx, mastH, bz);
+    jib.add(this._kmesh(this.kit.box, m, 0.85, 0.03, 0.03, 0.3, 0, 0, false));   // working jib
+    jib.add(this._kmesh(this.kit.box, m, 0.26, 0.03, 0.03, -0.12, 0, 0, false)); // counter jib
+    jib.add(this._kmesh(this.kit.box, this.matRoofDeck, 0.08, 0.07, 0.08, -0.2, 0, 0, false)); // counterweight
+    jib.add(this._kmesh(this.kit.box, m, 0.05, 0.06, 0.05, 0, 0.05, 0, false));  // cab
+    jib.add(this._kmesh(this.kit.box, m, 0.005, 0.28, 0.005, 0.6, -0.14, 0, false)); // hoist cable
+    jib.add(this._kmesh(this.kit.box, this.matRebar, 0.03, 0.03, 0.03, 0.6, -0.29, 0, false)); // hook block
+    group.add(jib);
+    group._craneJib = jib;
+    // aviation beacon on the mast top (blinks via renderer)
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+    beacon._isBeacon = true; beacon.position.set(bx, mastH + 0.03, bz); group.add(beacon);
+    group._beacon = beacon;
+  }
+
+  // A small earth-mover (bulldozer-ish) for site-prep stages.
+  _siteVehicle(hash) {
+    const g = new THREE.Group();
+    const body = Std({ color: 0xf2b400, roughness: 0.5, metalness: 0.4 });
+    g.add(this._kmesh(this.kit.box, body, 0.12, 0.05, 0.16, 0, 0.06, 0, false));
+    g.add(this._kmesh(this.kit.box, body, 0.08, 0.045, 0.07, 0, 0.105, -0.02, false)); // cab
+    g.add(this._kmesh(this.kit.box, this.matRebar, 0.14, 0.05, 0.015, 0, 0.05, 0.1, false)); // blade
+    for (const sx of [-0.06, 0.06]) g.add(this._kmesh(this.kit.box, this.matRoofDeck, 0.03, 0.05, 0.16, sx, 0.03, 0, false)); // tracks
+    return g;
   }
 
   // ─────── Industrial buildings ───────
