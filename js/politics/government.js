@@ -48,6 +48,16 @@ class Government {
     this.unrest = false;
     this._lastWeek = -1;
 
+    // ── Political-ecosystem layer (lobbying, corruption, protests, delay) ──
+    this.lawProgress = {};        // lawId -> 0..1 implementation factor (effects ramp in)
+    this.corruption = 0;          // 0..100 — rises with shady deals, risks scandals
+    this.scandals = [];           // recent scandal records
+    this.protest = null;          // { cause, weeksLeft, severity } while active
+    this.pendingDeal = null;      // a lobby's standing offer to the mayor
+    this.dealCooldown = 10;
+    this.lobby = {};
+    LOBBY_GROUPS.forEach(gp => { this.lobby[gp.id] = { satisfaction: 50, influence: gp.influence }; });
+
     this._computeDrivers();
     this._recomputeEffects();
     this._allocateSeats(this._popularVote());
@@ -247,15 +257,30 @@ class Government {
     return s;
   }
 
+  // Net pressure (−/+) that the external lobbies exert on a given law.
+  _lobbyPressure(lawId) {
+    let p = 0;
+    for (const gp of LOBBY_GROUPS) {
+      const st = this.lobby[gp.id]; if (!st) continue;
+      const w = (st.satisfaction / 100) * st.influence * 0.16;
+      if (gp.favors.includes(lawId)) p += w;
+      if (gp.opposes.includes(lawId)) p -= w;
+    }
+    return p;
+  }
+
   projectVotes(bill) {
     const law = LAW_BY_ID[bill.lawId];
     let yes = 0, no = 0; const byParty = {};
+    let lobbyP = this._lobbyPressure(bill.lawId);
+    if (bill.repeal) lobbyP = -lobbyP;                                   // lobbies resist repeal of laws they like
     for (const p of PARTIES) {
       const seats = this.partyState[p.id].seats;
       if (seats === 0) { byParty[p.id] = { seats, support: 0, vote: 'abstain' }; continue; }
       let support = this.partyStance(p.id, law, bill.repeal);
       if (this.coalition.includes(p.id)) support += 0.18;               // government discipline
       support += (bill.lobbied[p.id] || 0);                              // player lobbying
+      support += lobbyP;                                                 // external lobby pressure
       const vote = support > 0.06 ? 'yes' : support < -0.06 ? 'no' : 'abstain';
       if (vote === 'yes') yes += seats; else if (vote === 'no') no += seats;
       byParty[p.id] = { seats, support, vote };
@@ -294,10 +319,11 @@ class Government {
     bill.result = proj;
     const law = LAW_BY_ID[bill.lawId];
     if (passed) {
-      if (bill.repeal) this.activeLaws.delete(bill.lawId); else this.activeLaws.add(bill.lawId);
+      if (bill.repeal) { this.activeLaws.delete(bill.lawId); delete this.lawProgress[bill.lawId]; }
+      else { this.activeLaws.add(bill.lawId); this.lawProgress[bill.lawId] = bill.fastTrack ? 0.5 : 0; } // begins phasing in
       if (law.fx.approval) this.approval = polClamp(this.approval + law.fx.approval, 0, 100);
       this._recomputeEffects();
-      this._pushNews(`PASSED: ${bill.repeal ? 'Repeal of ' : ''}${law.name} (${proj.yes}–${proj.no}).`, 'TV', this.rulingParty);
+      this._pushNews(`PASSED: ${bill.repeal ? 'Repeal of ' : ''}${law.name} — implementation begins.`, 'TV', this.rulingParty);
     } else {
       this._pushNews(`REJECTED: ${bill.repeal ? 'Repeal of ' : ''}${law.name} (${proj.yes}–${proj.no}).`, 'Newspaper', null);
     }
@@ -311,22 +337,31 @@ class Government {
     const e = { taxMult: 1, growthMult: 1, happyAdd: 0, upkeepAdd: 0, revenueAdd: 0, crime: 0, pollution: 0 };
     for (const id of this.activeLaws) {
       const fx = LAW_BY_ID[id].fx;
-      if (fx.taxMult) e.taxMult *= fx.taxMult;
-      if (fx.growthMult) e.growthMult *= fx.growthMult;
-      if (fx.happyAdd) e.happyAdd += fx.happyAdd;
-      if (fx.upkeepAdd) e.upkeepAdd += fx.upkeepAdd;
-      if (fx.revenueAdd) e.revenueAdd += fx.revenueAdd;
-      if (fx.crime) e.crime += fx.crime;
-      if (fx.pollution) e.pollution += fx.pollution;
+      // Laws phase in: their effects scale with implementation progress (0..1),
+      // so a passed law reshapes the city gradually, not instantly.
+      const prog = this.lawProgress[id] != null ? this.lawProgress[id] : 1;
+      if (fx.taxMult) e.taxMult *= 1 + (fx.taxMult - 1) * prog;
+      if (fx.growthMult) e.growthMult *= 1 + (fx.growthMult - 1) * prog;
+      if (fx.happyAdd) e.happyAdd += fx.happyAdd * prog;
+      if (fx.upkeepAdd) e.upkeepAdd += fx.upkeepAdd * prog;
+      if (fx.revenueAdd) e.revenueAdd += fx.revenueAdd * prog;
+      if (fx.crime) e.crime += fx.crime * prog;
+      if (fx.pollution) e.pollution += fx.pollution * prog;
     }
     // Debt servicing folds into weekly upkeep.
     e.upkeepAdd += (this.debt + this.loans) * this.interestRate / this.config.weeksPerYear;
+    // Active protests physically drag on the city: growth stalls, mood dips.
+    let protestHappy = 0;
+    if (this.protest && this.protest.weeksLeft > 0) {
+      e.growthMult *= 1 - 0.12 * this.protest.severity;
+      protestHappy = -0.06 * this.protest.severity;
+    }
     this.effects = e;
     // Push additive, default-neutral modifiers the simulation already reads.
     this.game.sim.policyMods = {
       taxMult: e.taxMult,
       growthMult: e.growthMult,
-      happyAdd: e.happyAdd + this.tempHappy,
+      happyAdd: e.happyAdd + this.tempHappy + protestHappy,
       upkeepAdd: e.upkeepAdd,
       revenueAdd: e.revenueAdd,
     };
@@ -486,15 +521,117 @@ class Government {
   }
 
   // ───────────────────────── Protests ─────────────────────────
+  startProtest(cause, severity) {
+    severity = polClamp(severity ?? 0.5, 0.2, 1);
+    this.protest = { cause, severity, weeksLeft: 3 + Math.round(severity * 4) };
+    this.stability = polClamp(this.stability - 4 * severity * 5, 0, 100);
+    this.approval = polClamp(this.approval - 2, 0, 100);
+    this._recomputeEffects();
+    this._pushNews(`Protesters flood the streets over ${cause} — the city grinds.`, 'Breaking', null);
+  }
+
   _maybeProtest() {
+    if (this.protest && this.protest.weeksLeft > 0) return;     // one at a time
     if (!this.unrest) return;
-    if (Math.random() < 0.10) {
-      const causes = ['housing costs', 'unemployment', 'corruption', 'service cuts', 'pollution'];
+    if (Math.random() < 0.12) {
+      const causes = ['housing costs', 'unemployment', 'service cuts', 'pollution', 'the cost of living'];
       const cause = causes[(Math.random() * causes.length) | 0];
-      this.stability = polClamp(this.stability - 3, 0, 100);
-      this.approval = polClamp(this.approval - 1, 0, 100);
-      this._pushNews(`Protesters take to the streets over ${cause}.`, 'Breaking', null);
+      const severity = polClamp((50 - this.approval) / 50 + (50 - this.stability) / 80, 0.3, 1);
+      this.startProtest(cause, severity);
     }
+  }
+
+  // ───────────────────────── Lobbying, corruption, propagation ─────────────────────────
+  _tickPolitics() {
+    // 1) Laws phase in over ~8 weeks (faster if the city is well-run).
+    const ramp = 0.12 + (this.approval - 50) / 1000;
+    for (const id of this.activeLaws) {
+      const p = this.lawProgress[id];
+      if (p != null && p < 1) this.lawProgress[id] = Math.min(1, p + Math.max(0.05, ramp));
+    }
+
+    // 2) Lobby groups react to which of their priorities are law.
+    for (const gp of LOBBY_GROUPS) {
+      const st = this.lobby[gp.id]; if (!st) continue;
+      let s = 50;
+      for (const id of gp.favors) if (this.activeLaws.has(id)) s += 15 * (this.lawProgress[id] ?? 1);
+      for (const id of gp.opposes) if (this.activeLaws.has(id)) s -= 17 * (this.lawProgress[id] ?? 1);
+      st.satisfaction += (polClamp(s, 0, 100) - st.satisfaction) * 0.25;
+    }
+
+    // 3) Lobbies occasionally push their agenda through the chamber themselves.
+    if (this.bills.filter(b => b.status === 'pending').length === 0 && Math.random() < 0.05) {
+      const gp = LOBBY_GROUPS[(Math.random() * LOBBY_GROUPS.length) | 0];
+      const want = gp.favors.filter(id => !this.activeLaws.has(id));
+      if (want.length) {
+        const lawId = want[(Math.random() * want.length) | 0];
+        const bill = this.introduceBill(lawId, false);
+        if (bill) this._pushNews(`${gp.name} lobby pushes for ${LAW_BY_ID[lawId].name}.`, 'Online', null);
+      }
+    }
+
+    // 4) A lobby may offer the mayor a back-room deal.
+    if (this.dealCooldown > 0) this.dealCooldown--;
+    if (!this.pendingDeal && this.dealCooldown === 0 && Math.random() < 0.10) this._offerDeal();
+
+    // 5) Corruption slowly fades; the higher it is, the likelier a scandal breaks.
+    this.corruption = polClamp(this.corruption * 0.985, 0, 100);
+    const risk = (this.corruption / 100) * 0.09;
+    if (this.corruption > 18 && Math.random() < risk) this._breakScandal();
+  }
+
+  _offerDeal() {
+    // Prefer a group whose top favoured law is not yet enacted.
+    const pool = LOBBY_GROUPS.filter(gp => gp.favors.some(id => !this.activeLaws.has(id)));
+    if (!pool.length) return;
+    const gp = pool[(Math.random() * pool.length) | 0];
+    const want = gp.favors.filter(id => !this.activeLaws.has(id));
+    const lawId = want[(Math.random() * want.length) | 0];
+    this.pendingDeal = {
+      group: gp.id, lawId,
+      money: gp.donation.money, capital: gp.donation.capital, graft: gp.graft,
+    };
+  }
+
+  acceptDeal() {
+    const dl = this.pendingDeal; if (!dl) return false;
+    const gp = LOBBY_BY_ID[dl.group];
+    this.game.sim.money += dl.money;
+    this.politicalCapital = Math.min(14, this.politicalCapital + dl.capital);
+    this.corruption = polClamp(this.corruption + dl.graft, 0, 100);
+    if (this.lobby[dl.group]) this.lobby[dl.group].satisfaction = polClamp(this.lobby[dl.group].satisfaction + 18, 0, 100);
+    // Their bill arrives pre-whipped and on the fast track.
+    const bill = this.introduceBill(dl.lawId, false);
+    if (bill) { bill.fastTrack = true; for (const p of PARTIES) bill.lobbied[p.id] = (bill.lobbied[p.id] || 0) + 0.2; }
+    this._pushNews(`${gp.name} quietly donate $${dl.money.toLocaleString()} to City Hall.`, 'Online', null);
+    this.dealCooldown = 16;
+    this.pendingDeal = null;
+    this._recomputeEffects();
+    return true;
+  }
+
+  declineDeal() {
+    const dl = this.pendingDeal; if (!dl) return false;
+    if (this.lobby[dl.group]) this.lobby[dl.group].satisfaction = polClamp(this.lobby[dl.group].satisfaction - 12, 0, 100);
+    this.politicalCapital = Math.min(14, this.politicalCapital + 1);   // integrity earns a little goodwill
+    this.dealCooldown = 12;
+    this.pendingDeal = null;
+    return true;
+  }
+
+  _breakScandal() {
+    const kinds = ['kickbacks on a construction contract', 'a rezoning bribe', 'misused infrastructure funds', 'a no-bid contract scandal'];
+    const what = kinds[(Math.random() * kinds.length) | 0];
+    const hit = 5 + this.corruption * 0.12;
+    this.approval = polClamp(this.approval - hit, 0, 100);
+    this.stability = polClamp(this.stability - hit * 0.8, 0, 100);
+    this.politicalCapital = Math.max(0, this.politicalCapital - 2);
+    this.media.bias = polClamp(this.media.bias - 30, -100, 100);
+    this.corruption = polClamp(this.corruption - 14, 0, 100);          // exposure clears some rot
+    this.scandals.unshift({ what, week: this.game.sim.week, year: this.year() });
+    if (this.scandals.length > 8) this.scandals.pop();
+    this._pushNews(`SCANDAL: City Hall rocked by ${what}.`, 'Breaking', null);
+    if (Math.random() < 0.6) this.startProtest('corruption at City Hall', polClamp(0.4 + this.corruption / 120, 0.3, 1));
   }
 
   // ───────────────────────── News feed ─────────────────────────
@@ -510,6 +647,11 @@ class Government {
     this._lastWeek = week;
 
     this._computeDrivers();
+    this._tickPolitics();                                     // propagation, lobbying, corruption
+    if (this.protest && this.protest.weeksLeft > 0) {         // wind down an active protest
+      this.protest.weeksLeft--;
+      if (this.protest.weeksLeft <= 0) { this._pushNews('Protests subside; the streets clear.', 'Newspaper', null); this.protest = null; }
+    }
     this._recomputeEffects();
     this._updateApproval();
     this._partyAI();
@@ -532,6 +674,8 @@ class Government {
       activeLaws: [...this.activeLaws], nextElectionWeek: this.nextElectionWeek,
       media: this.media, relations: this.relations, debt: this.debt, bonds: this.bonds, loans: this.loans,
       news: this.news.slice(0, 20), lastElection: this.lastElection, eventCooldown: this.eventCooldown,
+      lawProgress: this.lawProgress, corruption: this.corruption, scandals: this.scandals.slice(0, 8),
+      protest: this.protest, lobby: this.lobby, dealCooldown: this.dealCooldown,
     };
   }
 
@@ -551,6 +695,14 @@ class Government {
     this.news = data.news || [];
     this.lastElection = data.lastElection || null;
     this.eventCooldown = data.eventCooldown ?? this.eventCooldown;
+    // Political-ecosystem state. Older saves: treat active laws as fully phased in.
+    this.lawProgress = data.lawProgress || {};
+    for (const id of this.activeLaws) if (this.lawProgress[id] == null) this.lawProgress[id] = 1;
+    this.corruption = data.corruption ?? 0;
+    this.scandals = data.scandals || [];
+    this.protest = data.protest || null;
+    this.dealCooldown = data.dealCooldown ?? this.dealCooldown;
+    if (data.lobby) for (const id in data.lobby) if (this.lobby[id]) Object.assign(this.lobby[id], data.lobby[id]);
     this._computeDrivers();
     this._recomputeEffects();
     this._computeBudget();

@@ -21,8 +21,9 @@ class PoliticsUI {
     };
     this.tabs = [
       ['overview', '📊 Overview'], ['parliament', '🏛 Parliament'], ['elections', '🗳 Elections'],
-      ['laws', '📜 Laws'], ['budget', '💰 Budget'], ['news', '📰 News'],
+      ['laws', '📜 Laws'], ['influence', '🤝 Influence'], ['budget', '💰 Budget'], ['news', '📰 News'],
     ];
+    this._seenDeal = false;
     this._buildTabs();
     document.getElementById('btn-gov').addEventListener('click', () => this.toggle());
     document.getElementById('gov-close').addEventListener('click', () => this.close());
@@ -60,6 +61,14 @@ class PoliticsUI {
     }
     // surface a pending political event
     if (this.gov.pendingEvent && this.el.eventModal.classList.contains('hidden')) this.showEvent(this.gov.pendingEvent);
+    // nudge the player when a lobby makes an offer
+    if (this.gov.pendingDeal && !this._seenDeal) {
+      this._seenDeal = true;
+      const gp = LOBBY_BY_ID[this.gov.pendingDeal.group];
+      if (this.game.ui) this.game.ui.toast(`🤝 ${gp.name} want a word — see Government ▸ Influence.`);
+    } else if (!this.gov.pendingDeal) {
+      this._seenDeal = false;
+    }
     if (this.isOpen()) this.render();
   }
 
@@ -68,7 +77,7 @@ class PoliticsUI {
     if (!this.isOpen()) return;
     const r = {
       overview: () => this._overview(), parliament: () => this._parliament(), elections: () => this._elections(),
-      laws: () => this._laws(), budget: () => this._budget(), news: () => this._news(),
+      laws: () => this._laws(), influence: () => this._influence(), budget: () => this._budget(), news: () => this._news(),
     }[this.tab];
     this.el.body.innerHTML = r ? r() : '';
   }
@@ -187,14 +196,66 @@ class PoliticsUI {
       const laws = LAWS.filter(l => l.cat === cat);
       html += `<div class="law-cat"><h4>${cat}</h4>` + laws.map(l => {
         const active = g.activeLaws.has(l.id);
+        const prog = g.lawProgress ? g.lawProgress[l.id] : null;
+        const implementing = active && prog != null && prog < 1;
+        const badge = implementing ? `<span class="chip warn">phasing in ${Math.round(prog * 100)}%</span>`
+                    : active ? '<span class="chip good">active</span>' : '';
         const verb = active ? 'Repeal' : 'Propose';
         return `<div class="law-row ${active ? 'active' : ''}">
-          <div class="law-info"><b>${l.name}</b> ${active ? '<span class="chip good">active</span>' : ''}<div class="law-desc">${l.desc}</div></div>
+          <div class="law-info"><b>${l.name}</b> ${badge}<div class="law-desc">${l.desc}</div></div>
           <button class="gov-btn small" data-act="propose" data-law="${l.id}" data-repeal="${active ? 1 : 0}">${verb}</button>
         </div>`;
       }).join('') + '</div>';
     }
     return html;
+  }
+
+  _influence() {
+    const g = this.gov;
+    const corr = Math.round(g.corruption);
+    const corrColor = corr > 60 ? 'var(--bad)' : corr > 30 ? 'var(--warn)' : 'var(--good)';
+
+    let deal = '';
+    if (g.pendingDeal) {
+      const gp = LOBBY_BY_ID[g.pendingDeal.group], law = LAW_BY_ID[g.pendingDeal.lawId];
+      deal = `<div class="gov-section"><h4>Back-room offer</h4>
+        <div class="deal-card" style="border-color:${gp.color}">
+          <div class="deal-head"><b style="color:${gp.color}">${gp.icon} ${gp.name}</b></div>
+          <div class="deal-body">Will donate <b>${this._money(g.pendingDeal.money)}</b> and <b>${g.pendingDeal.capital}</b> political capital if you champion <b>${law.name}</b>.
+            <div class="muted">Corruption +${g.pendingDeal.graft}. Risks a future scandal.</div></div>
+          <div class="bud-ops">
+            <button class="gov-btn primary" data-act="acceptDeal">Take the deal</button>
+            <button class="gov-btn" data-act="declineDeal">Refuse on principle</button>
+          </div>
+        </div></div>`;
+    }
+
+    const groups = LOBBY_GROUPS.map(gp => {
+      const st = g.lobby[gp.id] || { satisfaction: 50 };
+      const col = st.satisfaction > 55 ? 'var(--good)' : st.satisfaction < 35 ? 'var(--bad)' : 'var(--warn)';
+      return `<div class="lobby-row">
+        <div class="lobby-head"><span style="color:${gp.color}">${gp.icon} ${gp.name}</span><span class="poll-pct">${Math.round(st.satisfaction)}%</span></div>
+        ${this._bar(st.satisfaction, col)}
+        <div class="law-desc">${gp.blurb}</div>
+      </div>`;
+    }).join('');
+
+    const protest = (g.protest && g.protest.weeksLeft > 0)
+      ? `<div class="gov-warn">🪧 Active protest over ${g.protest.cause} — growth & mood are hit for ${g.protest.weeksLeft} more week(s).</div>` : '';
+    const scandals = g.scandals && g.scandals.length
+      ? g.scandals.slice(0, 5).map(s => `<div class="bill-mini"><span class="chip bad">scandal</span> ${s.what} <span class="muted">Yr ${s.year}</span></div>`).join('')
+      : '<div class="muted" style="padding:6px">No scandals on record. Keep it clean.</div>';
+
+    return `
+      <div class="gov-cards">
+        <div class="gov-card"><div class="gc-label">Corruption</div><div class="gc-big" style="color:${corrColor}">${corr}%</div>${this._bar(corr, corrColor)}</div>
+        <div class="gov-card"><div class="gc-label">Scandals</div><div class="gc-big">${g.scandals ? g.scandals.length : 0}</div><div class="gc-sub">on record</div></div>
+      </div>
+      ${protest}
+      ${deal}
+      <div class="gov-section"><h4>Lobby groups</h4>${groups}</div>
+      <div class="gov-section"><h4>Scandal sheet</h4>${scandals}</div>
+    `;
   }
 
   _budget() {
@@ -253,6 +314,10 @@ class PoliticsUI {
       else this.game.ui.toast('Not enough political capital.');
     } else if (act === 'callElection') {
       g.runElection(); this.game.ui.toast('Snap election called!');
+    } else if (act === 'acceptDeal') {
+      if (g.acceptDeal()) this.game.ui.toast('Deal struck — the cash is in, but so is the risk.');
+    } else if (act === 'declineDeal') {
+      if (g.declineDeal()) this.game.ui.toast('You turned the lobby down.');
     } else if (act === 'bond') { g.issueBond(20000); }
     else if (act === 'loan') { g.takeLoan(10000); }
     else if (act === 'repay') { g.repayDebt(10000); }
