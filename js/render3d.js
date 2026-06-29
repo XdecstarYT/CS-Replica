@@ -492,9 +492,67 @@ class Renderer3D {
     if (zone === TILE.ZONE_RES)      group = this.models.buildResidential(x, y, T, level, rng);
     else if (zone === TILE.ZONE_COM) group = this.models.buildCommercial(x, y, T, level, rng);
     else                             group = this.models.buildIndustrial(x, y, T, level, rng);
+    this._mergeStatic(group);        // batch static meshes by material → far fewer draw calls
     group.position.set(cx, 0, cz);
     group._zoneLevel = level;
     return group;
+  }
+
+  // Performance: merge a building's many static MeshStandard children into one
+  // mesh per material (transforms baked in), collapsing ~30–50 draw calls per
+  // building to a handful. Animated/self-lit parts (beacons, LED rings on
+  // MeshBasic materials, nested groups) are left untouched, and the facade
+  // material reference is preserved so night-window glow still works.
+  _mergeStatic(group) {
+    try {
+      const byMat = new Map();
+      const remove = [];
+      for (const ch of group.children) {
+        if (!ch.isMesh) continue;                                   // skip nested groups
+        const m = ch.material;
+        if (!m || !m.isMeshStandardMaterial) continue;              // keep basic-mat (beacon/LED/halo)
+        if (ch === group._beacon || ch === group._windTurbine) continue;
+        if (!ch.geometry || !ch.geometry.attributes || !ch.geometry.attributes.position) continue;
+        let arr = byMat.get(m); if (!arr) { arr = []; byMat.set(m, arr); }
+        ch.updateMatrix();
+        const src = ch.geometry.index ? ch.geometry.toNonIndexed() : ch.geometry.clone();
+        src.applyMatrix4(ch.matrix);
+        arr.push(src);
+        remove.push(ch);
+      }
+      if (byMat.size === 0) return;
+      for (const ch of remove) {
+        group.remove(ch);
+        if (ch.geometry && !this.models.sharedGeos.has(ch.geometry)) ch.geometry.dispose();
+      }
+      for (const [mat, geos] of byMat) {
+        const merged = this._concatGeos(geos);
+        geos.forEach(g => g.dispose());
+        const mesh = new THREE.Mesh(merged, mat);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        group.add(mesh);
+      }
+    } catch (e) { /* on any failure leave the group unmerged — correctness over speed */ }
+  }
+
+  // Concatenate non-indexed BufferGeometries (position/normal/uv) into one.
+  _concatGeos(geos) {
+    let total = 0;
+    for (const g of geos) total += g.attributes.position.count;
+    const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3), uv = new Float32Array(total * 2);
+    let v = 0;
+    for (const g of geos) {
+      const c = g.attributes.position.count;
+      pos.set(g.attributes.position.array, v * 3);
+      if (g.attributes.normal) nor.set(g.attributes.normal.array, v * 3);
+      if (g.attributes.uv) uv.set(g.attributes.uv.array, v * 2);
+      v += c;
+    }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    return out;
   }
 
   _buildService(x, y, cx, cz, T, svc) {
