@@ -62,6 +62,271 @@ class ModelBuilder {
       this.lampPoleGeo, this.lampHeadGeo, this.lampBulbGeo, this.lampArmGeo,
       this.tlPoleGeo, this.tlBoxGeo, this.tlLensGeo,
     ]);
+
+    // Architecture kit (footprints, rooftop detail, facade material library)
+    this._initArch();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  Architecture system — shared instanced geometry + cached PBR facades.
+  //  Buildings are massed from a tiny set of unit geometries (scaled per
+  //  instance) so the whole skyline costs almost no extra geometry, and they
+  //  are skinned with baked window-grid textures that carry an emissive
+  //  "night map" so individual windows glow after dark.
+  // ─────────────────────────────────────────────────────────────────────
+  _initArch() {
+    // Unit geometries — scaled per mesh, never disposed (shared set).
+    this.kit = {
+      box:     new THREE.BoxGeometry(1, 1, 1),
+      cyl:     new THREE.CylinderGeometry(1, 1, 1, 12),
+      cyl8:    new THREE.CylinderGeometry(1, 1, 1, 8),
+      antenna: new THREE.CylinderGeometry(0.05, 0.12, 1, 5),
+      dish:    new THREE.SphereGeometry(0.5, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.5),
+      cone:    new THREE.ConeGeometry(0.5, 1, 10),
+    };
+    for (const k in this.kit) this.sharedGeos.add(this.kit[k]);
+
+    // Shared structural / rooftop / detail materials (reused city-wide → no churn).
+    this.matConc       = Std({ map: this._concreteTex(), color: 0xc2c4c6, roughness: 0.82, metalness: 0.04 });
+    this.matRoofDeck   = Std({ color: 0x3a3d42, roughness: 0.88, metalness: 0.10 });
+    this.matRoofMetal  = Std({ color: 0x9398a0, roughness: 0.55, metalness: 0.55 });
+    this.matVent       = Std({ color: 0xb6babe, roughness: 0.5, metalness: 0.6 });
+    this.matTank       = Std({ color: 0x99a0a6, roughness: 0.5, metalness: 0.4 });
+    this.matStoreGlass = Std({ color: 0x0c1c28, roughness: 0.05, metalness: 0.6, emissive: new THREE.Color(0x040a10) });
+    this.matCanopy     = Std({ color: 0x2b333d, roughness: 0.5, metalness: 0.3 });
+    this.matBalcony    = Std({ color: 0xd2d5d9, roughness: 0.6, metalness: 0.1 });
+    this.matBalGlass   = Std({ color: 0x9ec6da, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.42 });
+    this.matPodium     = Std({ color: 0x39434f, roughness: 0.5, metalness: 0.22 });
+    this.matDoor       = Std({ color: 0x12202c, roughness: 0.18, metalness: 0.5 });
+    this.matSpire      = Std({ color: 0xc8ccd0, roughness: 0.3, metalness: 0.65 });
+    this.matPipe       = Std({ color: 0x7d8389, roughness: 0.55, metalness: 0.5 });
+    this.matHelipad    = Std({ color: 0x2a2d31, roughness: 0.85, metalness: 0.05 });
+    this.matHeliMark   = Std({ color: 0xf2c200, roughness: 0.6, metalness: 0, emissive: new THREE.Color(0x251c00) });
+    this.matSolar      = Std({ color: 0x16263f, roughness: 0.22, metalness: 0.55 });
+    this.matDeck       = Std({ color: 0x223040, roughness: 0.12, metalness: 0.3, transparent: true, opacity: 0.6 });
+
+    // Self-lit shop signage (a small palette, picked per building).
+    this.signMats = [
+      Std({ color: 0xff5566, roughness: 0.4, emissive: new THREE.Color(0x551018) }),
+      Std({ color: 0x44ccff, roughness: 0.4, emissive: new THREE.Color(0x06303f) }),
+      Std({ color: 0xffcc44, roughness: 0.4, emissive: new THREE.Color(0x3a2c06) }),
+      Std({ color: 0x66ff99, roughness: 0.4, emissive: new THREE.Color(0x0a3a1c) }),
+      Std({ color: 0xcc88ff, roughness: 0.4, emissive: new THREE.Color(0x2a1244) }),
+    ];
+
+    // Detached-house materials (reused).
+    this.matHouseBrick = Std({ map: this._brickTex(), roughness: 0.85, metalness: 0 });
+    this.matHouseSlate = Std({ map: this._slateRoofTex(), roughness: 0.9, metalness: 0 });
+    this.matHouseTrim  = Std({ color: 0xeeeae2, roughness: 0.72, metalness: 0 });
+    this.matHouseDoor  = Std({ color: 0x5a2e10, roughness: 0.85, metalness: 0.05 });
+
+    // Industrial materials (reused).
+    this.matIndWall = Std({ map: this._corrugatedTex(), roughness: 0.8, metalness: 0.12 });
+    this.matIndRoof = Std({ map: this._corrugatedTex(), color: 0x8a8d84, roughness: 0.82, metalness: 0.08 });
+
+    this._facCache = {};
+  }
+
+  // Deterministic per-tile hash + small PRNG seeded from it.
+  _hash(x, y) {
+    let h = ((x * 2654435761) ^ (y * 1111111111)) >>> 0;
+    h ^= h >>> 16; h = Math.imul(h, 0x45d9f3b); h ^= h >>> 16;
+    return h >>> 0;
+  }
+  _rng(seed) {
+    let s = (seed >>> 0) || 1;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 0xFFFFFFFF; };
+  }
+
+  _shade(hex, amt) {
+    const n = typeof hex === 'number' ? hex : parseInt(hex.replace('#', ''), 16);
+    const r = Math.max(0, Math.min(255, ((n >> 16) & 255) + amt));
+    const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + amt));
+    const b = Math.max(0, Math.min(255, (n & 255) + amt));
+    return `rgb(${r | 0},${g | 0},${b | 0})`;
+  }
+
+  // A scaled, positioned instance of a shared kit geometry.
+  _kmesh(geo, mat, sx, sy, sz, x, y, z, shadow) {
+    const m = new THREE.Mesh(geo, mat);
+    m.scale.set(sx, sy, sz);
+    m.position.set(x || 0, y || 0, z || 0);
+    if (shadow !== false) m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  // Build (and cache) a PBR facade material: a baked window grid with frames,
+  // glass reflections and a matching emissive map so windows light up at night.
+  _facadeMat(key, cfg) {
+    if (this._facCache[key]) return this._facCache[key];
+    const { cols, rows, wall, glass, frame, style } = cfg;
+    const S = 256;
+    const dayC = document.createElement('canvas'); dayC.width = dayC.height = S;
+    const ngtC = document.createElement('canvas'); ngtC.width = ngtC.height = S;
+    const d = dayC.getContext('2d'), n = ngtC.getContext('2d');
+    const rnd = this._rng(cfg.seed || 7);
+
+    // Wall base + subtle grime so flat surfaces read as a real material.
+    d.fillStyle = wall; d.fillRect(0, 0, S, S);
+    for (let i = 0; i < 1400; i++) { d.fillStyle = `rgba(0,0,0,${rnd() * 0.05})`; d.fillRect(rnd() * S, rnd() * S, 2, 2); }
+    n.fillStyle = '#000000'; n.fillRect(0, 0, S, S);
+
+    const cw = S / cols, ch = S / rows;
+    const ins = Math.max(2, Math.min(cw, ch) * 0.18);
+    const litChance = style === 'glass' ? 0.58 : style === 'office' ? 0.52 : style === 'stone' ? 0.46 : 0.4;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const wx = c * cw + ins, wy = r * ch + ins, ww = cw - ins * 2, wh = ch - ins * 2;
+        // recess shadow around the opening
+        d.fillStyle = 'rgba(0,0,0,0.30)'; d.fillRect(wx - 1.5, wy - 1.5, ww + 3, wh + 3);
+        // glass with a vertical sky→ground gradient
+        const g = d.createLinearGradient(0, wy, 0, wy + wh);
+        g.addColorStop(0, this._shade(glass, 26));
+        g.addColorStop(0.45, glass);
+        g.addColorStop(1, this._shade(glass, -20));
+        d.fillStyle = g; d.fillRect(wx, wy, ww, wh);
+        // diagonal specular reflection
+        d.fillStyle = 'rgba(255,255,255,0.13)';
+        d.beginPath(); d.moveTo(wx, wy + wh); d.lineTo(wx + ww * 0.55, wy); d.lineTo(wx + ww, wy); d.lineTo(wx, wy + wh); d.closePath(); d.fill();
+        // frame + central mullion
+        d.strokeStyle = frame; d.lineWidth = Math.max(1, ins * 0.6); d.strokeRect(wx, wy, ww, wh);
+        if (style === 'office' || style === 'glass') { d.fillStyle = frame; d.fillRect(wx + ww / 2 - 0.6, wy, 1.2, wh); }
+        if (style === 'resi' || style === 'stone') { d.fillStyle = this._shade(wall, 20); d.fillRect(wx - 1, wy + wh, ww + 2, Math.max(1.5, ins * 0.5)); }
+        if (style === 'stone') { d.fillStyle = this._shade(wall, -22); d.fillRect(wx - 1, wy - Math.max(1.5, ins * 0.4), ww + 2, Math.max(1.5, ins * 0.4)); } // stone lintel
+        // night occupancy
+        if (rnd() < litChance) {
+          const b = 0.55 + rnd() * 0.45;
+          const rr = 255 * b, gg = (212 + rnd() * 34) * b, bb = (148 + rnd() * 52) * b;
+          n.fillStyle = `rgb(${rr | 0},${gg | 0},${bb | 0})`;
+          n.fillRect(wx, wy, ww, wh);
+        }
+      }
+    }
+    // horizontal floor shadow lines for depth
+    d.strokeStyle = 'rgba(0,0,0,0.22)'; d.lineWidth = 1;
+    for (let r = 1; r < rows; r++) { d.beginPath(); d.moveTo(0, r * ch); d.lineTo(S, r * ch); d.stroke(); }
+
+    const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.anisotropy = 8; return t; };
+    const rough = style === 'glass' ? 0.12 : style === 'office' ? 0.42 : 0.7;
+    const metal = style === 'glass' ? 0.35 : style === 'office' ? 0.18 : 0.05;
+    const mat = Std({ map: mk(dayC), emissiveMap: mk(ngtC), emissive: new THREE.Color(0, 0, 0), roughness: rough, metalness: metal });
+    this._facCache[key] = mat;
+    return mat;
+  }
+
+  // Pick a facade material for a zone/level, varied by tile hash. Each
+  // tag bundles several architectural styles (glass / office / stone / brick
+  // / warm + cool residential) so neighbouring buildings rarely match — the
+  // skyline reads like a real mixed-era downtown.
+  _zoneFacade(zone, level, hash) {
+    const P = {
+      // Residential mid-rise: warm render, cool render, brick walk-up.
+      res2: [
+        { style: 'resi',  cols: 4, rows: 5, wall: '#b9a48a', glass: '#8fa6ad', frame: '#6a5640' },
+        { style: 'resi',  cols: 4, rows: 5, wall: '#a7b0a4', glass: '#90a8b0', frame: '#55604f' },
+        { style: 'stone', cols: 4, rows: 5, wall: '#a07a5e', glass: '#7c8e90', frame: '#5a4632' },
+      ],
+      // Residential towers: Hong-Kong-dense cool, Singapore-clean, warm render.
+      res3: [
+        { style: 'resi',  cols: 5, rows: 10, wall: '#9aa6b0', glass: '#8fb0bd', frame: '#4c5660' },
+        { style: 'resi',  cols: 6, rows: 12, wall: '#b6ab9a', glass: '#9bb6bd', frame: '#5c5040' },
+        { style: 'glass', cols: 5, rows: 11, wall: '#2a3640', glass: '#6f9aad', frame: '#162028' },
+      ],
+      // Commercial mid: clean office, and a London-stone chambers block.
+      com2: [
+        { style: 'office', cols: 5, rows: 7, wall: '#6b7178', glass: '#a8c6da', frame: '#3a4048' },
+        { style: 'office', cols: 5, rows: 7, wall: '#7a818a', glass: '#9bb8cc', frame: '#414850' },
+        { style: 'stone',  cols: 5, rows: 6, wall: '#cabfa8', glass: '#94a2a2', frame: '#897e66' },
+      ],
+      // Commercial high: dark-glass, teal-glass, and limestone art-deco.
+      com3: [
+        { style: 'glass', cols: 5, rows: 13, wall: '#16202c', glass: '#3f6076', frame: '#0b1420' },
+        { style: 'glass', cols: 5, rows: 13, wall: '#1b2733', glass: '#4a6b82', frame: '#0d1822' },
+        { style: 'glass', cols: 6, rows: 15, wall: '#202c30', glass: '#577a86', frame: '#101a1c' },
+        { style: 'stone', cols: 6, rows: 14, wall: '#c7bda8', glass: '#8f9c9e', frame: '#857c68' },
+      ],
+      ind: [
+        { style: 'office', cols: 4, rows: 3, wall: '#7b7d80', glass: '#9fb6c2', frame: '#3c3f44' },
+      ],
+    };
+    const tag = zone === TILE.ZONE_RES ? (level >= 3 ? 'res3' : 'res2')
+              : zone === TILE.ZONE_COM ? (level >= 3 ? 'com3' : 'com2')
+              : 'ind';
+    const opts = P[tag];
+    const vi = hash % opts.length;
+    const o = opts[vi];
+    return this._facadeMat(`${tag}_${vi}`, { cols: o.cols, rows: o.rows, style: o.style, seed: 101 + vi * 37, wall: o.wall, glass: o.glass, frame: o.frame });
+  }
+
+  // ── Rooftop & ground-floor kit ──────────────────────────────────────────
+  _capRoof(group, w, d, y) {
+    group.add(this._kmesh(this.kit.box, this.matRoofDeck, w * 1.01, 0.03, d * 1.01, 0, y + 0.015, 0, false));
+    const t = 0.028, ph = 0.06;
+    const seg = (sw, sd, x, z) => group.add(this._kmesh(this.kit.box, this.matConc, sw, ph, sd, x, y + ph / 2, z, false));
+    seg(w + 0.02, t, 0, d / 2); seg(w + 0.02, t, 0, -d / 2);
+    seg(t, d + 0.02, w / 2, 0); seg(t, d + 0.02, -w / 2, 0);
+  }
+
+  _rooftop(group, w, d, y, hash, big) {
+    const R = this._rng(hash ^ 0x9e3779b9);
+    const span = (s) => (R() - 0.5) * s;
+    // HVAC units
+    const units = 1 + (R() * 3 | 0);
+    for (let i = 0; i < units; i++) {
+      const uw = 0.09 + R() * 0.10, ud = 0.09 + R() * 0.10, uh = 0.04 + R() * 0.05;
+      const px = span(w * 0.6), pz = span(d * 0.6);
+      group.add(this._kmesh(this.kit.box, this.matRoofMetal, uw, uh, ud, px, y + uh / 2, pz));
+      group.add(this._kmesh(this.kit.box, this.matRoofDeck, uw * 0.7, 0.012, ud * 0.7, px, y + uh + 0.006, pz, false));
+    }
+    // vents
+    for (let i = 0; i < 2; i++) { const vr = 0.016 + R() * 0.014; group.add(this._kmesh(this.kit.cyl8, this.matVent, vr, 0.05 + R() * 0.05, vr, span(w * 0.7), y + 0.04, span(d * 0.7))); }
+    // water tank
+    if (R() > 0.45) { const tr = 0.045 + R() * 0.03; group.add(this._kmesh(this.kit.cyl, this.matTank, tr, 0.09 + R() * 0.05, tr, span(w * 0.5), y + 0.06, span(d * 0.5))); }
+    // mechanical penthouse
+    if (R() > 0.4) { const pw = w * (0.28 + R() * 0.2), pd = d * (0.28 + R() * 0.2), ph = 0.07 + R() * 0.06; group.add(this._kmesh(this.kit.box, this.matConc, pw, ph, pd, span(w * 0.2), y + ph / 2, span(d * 0.2))); }
+    // solar array (tilted panels)
+    if (R() > 0.55) {
+      const arr = 2 + (R() * 2 | 0);
+      const baseZ = -d * 0.22;
+      for (let s = 0; s < arr; s++) {
+        const p = this._kmesh(this.kit.box, this.matSolar, w * 0.5, 0.006, 0.05, span(w * 0.15), y + 0.03, baseZ + s * 0.07, false);
+        p.rotation.x = -0.5; group.add(p);
+      }
+    }
+    if (big) {
+      if (R() > 0.5) group.add(this._kmesh(this.kit.antenna, this.matVent, 0.5, 0.18 + R() * 0.18, 0.5, span(w * 0.4), y + 0.12, span(d * 0.4)));
+      if (R() > 0.6) { const m = this._kmesh(this.kit.dish, this.matRoofMetal, 0.075, 0.075, 0.075, span(w * 0.4), y + 0.05, span(d * 0.4)); m.rotation.x = -0.7; group.add(m); }
+    }
+  }
+
+  _helipad(group, w, d, y) {
+    group.add(this._kmesh(this.kit.cyl, this.matHelipad, w * 0.34, 0.012, d * 0.34, 0, y + 0.006, 0, false));
+    group.add(this._kmesh(this.kit.box, this.matHeliMark, w * 0.22, 0.006, 0.03, 0, y + 0.014, 0, false));
+    group.add(this._kmesh(this.kit.box, this.matHeliMark, 0.03, 0.006, d * 0.14, 0, y + 0.014, 0, false));
+  }
+
+  _entrance(group, w, fz, hash) {
+    // recessed door + flat canopy at the street face (fz = +z front)
+    group.add(this._kmesh(this.kit.box, this.matDoor, w * 0.34, 0.16, 0.02, 0, 0.08, fz + 0.006, false));
+    group.add(this._kmesh(this.kit.box, this.matCanopy, w * 0.44, 0.015, 0.09, 0, 0.18, fz + 0.045, false));
+  }
+
+  _storefront(group, w, h, fz, hash) {
+    const baseH = Math.min(0.2, h * 0.42);
+    group.add(this._kmesh(this.kit.box, this.matStoreGlass, w * 0.92, baseH, 0.02, 0, baseH / 2 + 0.01, fz + 0.006, false));
+    // entrance + awning canopy
+    group.add(this._kmesh(this.kit.box, this.matCanopy, w * 0.96, 0.015, 0.1, 0, baseH + 0.04, fz + 0.055, false));
+    // illuminated sign band above the shopfront
+    group.add(this._kmesh(this.kit.box, this.signMats[hash % this.signMats.length], w * 0.6, 0.06, 0.018, 0, baseH + 0.12, fz + 0.02, false));
+  }
+
+  _balconies(group, w, d, top, floors, fz) {
+    for (let f = 1; f <= floors; f++) {
+      const fy = (top / (floors + 1)) * f;
+      group.add(this._kmesh(this.kit.box, this.matBalcony, w * 0.42, 0.02, 0.1, 0, fy, fz + 0.05, false));
+      group.add(this._kmesh(this.kit.box, this.matBalGlass, w * 0.42, 0.05, 0.006, 0, fy + 0.035, fz + 0.1, false));
+    }
   }
 
   // ─────── Canvas textures ───────
@@ -647,239 +912,285 @@ class ModelBuilder {
 
   buildResidential(x, y, T, level, rng) {
     const group = new THREE.Group();
-    const fw = T * (0.84 - level * 0.02);
+    const hash = this._hash(x, y);
+    if (level === 1) { this._house(group, T, hash); group._windowMats = [this.matHouseBrick]; return group; }
+
+    const fw = T * 0.82;
     const h  = this._bldH(x, y, TILE.ZONE_RES, level);
-    const windowMats = [];
+    const fz = fw / 2;
+    const fac = this._zoneFacade(TILE.ZONE_RES, level, hash);
+    const shape = hash % 4;
 
-    if (level === 1) {
-      const brickMat = Std({ map: this._brickTex(), roughness: 0.85, metalness: 0 });
-      const slateMat = Std({ map: this._slateRoofTex(), roughness: 0.90, metalness: 0 });
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(fw, h, fw), brickMat);
-      body.position.y = h / 2; body.castShadow = body.receiveShadow = true; group.add(body);
-
-      const roofGeo = this._gabledRoofGeo(fw, fw, h * 0.55, 0.045);
-      const roof = new THREE.Mesh(roofGeo, slateMat);
-      roof.position.y = h; roof.castShadow = true; group.add(roof);
-
-      // Chimney
-      const chimMat = Std({ map: this._brickTex(), roughness: 0.88, metalness: 0 });
-      const chim = new THREE.Mesh(new THREE.BoxGeometry(0.065,0.26,0.065), chimMat);
-      chim.position.set(fw*0.24, h+0.10, fw*0.18); group.add(chim);
-      const capMat = Std({ color: 0x444444, roughness: 0.60, metalness: 0.15 });
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.080,0.018,0.080), capMat);
-      cap.position.set(fw*0.24, h+0.24, fw*0.18); group.add(cap);
-
-      // Porch
-      const concMat = Std({ map: this._concreteTex(), roughness: 0.80, metalness: 0 });
-      const porch = new THREE.Mesh(new THREE.BoxGeometry(fw*0.55,0.022,0.14), concMat);
-      porch.position.set(0, 0.011, fw*0.5+0.07); group.add(porch);
-      const postMat = Std({ color: 0xeeeeee, roughness: 0.75, metalness: 0 });
-      for (const px of [-fw*0.19, fw*0.19]) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,h*0.60,7), postMat);
-        post.position.set(px, h*0.30, fw*0.5+0.12); group.add(post);
+    if (level === 2) {
+      // Mid-rise apartment block — footprint varies (box / L / slab).
+      if (shape === 0) {
+        // L-shape: main wing + side wing
+        group.add(this._kmesh(this.kit.box, fac, fw, h, fw * 0.6, -fw * 0.12, h / 2, fz - fw * 0.3));
+        group.add(this._kmesh(this.kit.box, fac, fw * 0.55, h, fw * 0.5, fw * 0.32, h / 2, -fw * 0.2));
+        this._capRoof(group, fw, fw * 0.6, h); this._capRoof(group, fw * 0.55, fw * 0.5, h);
+      } else if (shape === 1) {
+        // slab
+        group.add(this._kmesh(this.kit.box, fac, fw, h, fw * 0.62, 0, h / 2, 0));
+        this._capRoof(group, fw, fw * 0.62, h);
+      } else if (shape === 2) {
+        // U-shape around a rear courtyard (back wing + two side wings)
+        const wing = fw * 0.3;
+        group.add(this._kmesh(this.kit.box, fac, fw, h, wing, 0, h / 2, -fz + wing / 2));
+        group.add(this._kmesh(this.kit.box, fac, wing, h, fw * 0.74, -fz + wing / 2, h / 2, fw * 0.06));
+        group.add(this._kmesh(this.kit.box, fac, wing, h, fw * 0.74, fz - wing / 2, h / 2, fw * 0.06));
+        this._capRoof(group, fw, wing, h);
+        this._capRoof(group, wing, fw * 0.74, h); this._capRoof(group, wing, fw * 0.74, h);
+      } else {
+        group.add(this._kmesh(this.kit.box, fac, fw, h, fw, 0, h / 2, 0));
+        this._capRoof(group, fw, fw, h);
       }
-      // Door
-      const doorMat = Std({ color: 0x5a2e10, roughness: 0.85, metalness: 0.05 });
-      const door = new THREE.Mesh(new THREE.BoxGeometry(0.066,0.12,0.010), doorMat);
-      door.position.set(0, 0.060, fw*0.5+0.005); group.add(door);
-
-      // Window glow mats
-      windowMats.push(brickMat);
+      this._balconies(group, fw, fw, h, 2, fz);
+      this._rooftop(group, fw, fw, h, hash, false);
+      this._entrance(group, fw, fz, hash);
 
     } else {
-      const brickMat = Std({ map: this._brickTex(), roughness: 0.85, metalness: 0 });
-      const concMat  = Std({ map: this._concreteTex(), roughness: 0.78, metalness: 0 });
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(fw, h, fw), brickMat);
-      body.position.y = h/2; body.castShadow = body.receiveShadow = true; group.add(body);
-
-      // Floor bands
-      const bandMat = Std({ color: 0xaaaaaa, roughness: 0.72, metalness: 0 });
-      for (let fy = 0.24; fy < h - 0.05; fy += 0.24) {
-        const band = new THREE.Mesh(new THREE.BoxGeometry(fw+0.030,0.020,fw+0.030), bandMat);
-        band.position.y = fy; group.add(band);
+      // Apartment tower — stacked setbacks for a real high-rise silhouette.
+      let cw = fw, cd = fw, y0 = 0;
+      const tiers = 2 + (hash % 2);
+      for (let t = 0; t < tiers; t++) {
+        const th = t === 0 ? h * 0.5 : (h * 0.5 / (tiers - 1));
+        group.add(this._kmesh(this.kit.box, fac, cw, th, cd, 0, y0 + th / 2, 0));
+        if (t > 0) group.add(this._kmesh(this.kit.box, this.matConc, cw + 0.05, 0.025, cd + 0.05, 0, y0 + 0.012, 0, false));
+        y0 += th; cw *= 0.82; cd *= 0.82;
       }
-
-      // Cornice
-      const cor = new THREE.Mesh(new THREE.BoxGeometry(fw+0.055,0.040,fw+0.055), concMat);
-      cor.position.y = h+0.020; group.add(cor);
-      const par = new THREE.Mesh(new THREE.BoxGeometry(fw+0.015,0.065,fw+0.015), Std({ color: 0xcccccc, roughness: 0.75, metalness: 0 }));
-      par.position.y = h+0.072; group.add(par);
-
-      // Balconies
-      const balMat = Std({ color: 0xcccccc, roughness: 0.70, metalness: 0.05 });
-      const floors = level === 2 ? 2 : 4;
-      for (let fl = 1; fl <= floors; fl++) {
-        const fy = (h / (floors + 1)) * fl;
-        const bal = new THREE.Mesh(new THREE.BoxGeometry(fw*0.38,0.025,0.11), balMat);
-        bal.position.set(fw*0.48+0.055, fy, 0); group.add(bal);
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(fw*0.38,0.008,0.006), balMat);
-        rail.position.set(fw*0.48+0.055, fy+0.068, 0.052); group.add(rail);
-      }
-
-      if (level === 3) {
-        const wtMat = Std({ color: 0x8a7a5a, roughness: 0.88, metalness: 0.05 });
-        const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.09,0.20,9), wtMat);
-        tank.position.set(-fw*0.28, h+0.16, fw*0.27); group.add(tank);
-        for (let i = 0; i < 5; i++) {
-          const ang = (i / 5) * Math.PI * 2;
-          const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.010,0.010,0.15,5), wtMat);
-          leg.position.set(-fw*0.28+Math.cos(ang)*0.09, h+0.075, fw*0.27+Math.sin(ang)*0.09); group.add(leg);
-        }
-      }
-      windowMats.push(brickMat);
+      this._capRoof(group, cw, cd, y0);
+      this._balconies(group, fw, fw, h * 0.5, 3, fz);
+      this._rooftop(group, cw, cd, y0, hash, true);
+      this._entrance(group, fw, fz, hash);
     }
 
-    group._windowMats = windowMats;
+    group._windowMats = [fac];
     return group;
+  }
+
+  // Detached house with gabled roof, chimney, porch and door.
+  _house(group, T, hash) {
+    const fw = T * 0.78;
+    const h = 0.4 + (this._rng(hash)() * 0.12);
+    const body = this._kmesh(this.kit.box, this.matHouseBrick, fw, h, fw, 0, h / 2, 0);
+    group.add(body);
+    const roof = new THREE.Mesh(this._gabledRoofGeo(fw, fw, h * 0.55, 0.045), this.matHouseSlate);
+    roof.position.y = h; roof.castShadow = true; group.add(roof);
+    // chimney
+    group.add(this._kmesh(this.kit.box, this.matHouseBrick, 0.065, 0.26, 0.065, fw * 0.24, h + 0.10, fw * 0.18));
+    group.add(this._kmesh(this.kit.box, this.matRoofDeck, 0.08, 0.018, 0.08, fw * 0.24, h + 0.24, fw * 0.18, false));
+    // porch + posts + door
+    group.add(this._kmesh(this.kit.box, this.matConc, fw * 0.55, 0.022, 0.14, 0, 0.011, fw * 0.5 + 0.07, false));
+    for (const px of [-fw * 0.19, fw * 0.19]) group.add(this._kmesh(this.kit.cyl, this.matHouseTrim, 0.016, h * 0.6, 0.016, px, h * 0.3, fw * 0.5 + 0.12, false));
+    group.add(this._kmesh(this.kit.box, this.matHouseDoor, 0.066, 0.12, 0.01, 0, 0.06, fw * 0.5 + 0.006, false));
   }
 
   // ─────── Commercial buildings ───────
 
   buildCommercial(x, y, T, level, rng) {
     const group = new THREE.Group();
-    const fw = T * (0.84 - level * 0.02);
+    const hash = this._hash(x, y);
+    const fw = T * 0.82;
     const h  = this._bldH(x, y, TILE.ZONE_COM, level);
-    const windowMats = [];
+    const fz = fw / 2;
 
     if (level === 1) {
-      const wallMat = Std({ color: 0x5888d0, roughness: 0.55, metalness: 0.10 });
-      const glassMat = Std({ color: 0xaaddff, roughness: 0.04, metalness: 0.08, transparent: true, opacity: 0.62 });
-      const awMat = Std({ color: 0xcc4444, roughness: 0.85, metalness: 0 });
-      const signMat = Std({ color: 0xffee44, roughness: 0.40, metalness: 0, emissive: new THREE.Color(0.06, 0.055, 0) });
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(fw,h,fw), wallMat);
-      body.position.y = h/2; body.castShadow = body.receiveShadow = true; group.add(body);
-      const sf = new THREE.Mesh(new THREE.BoxGeometry(fw*0.78,h*0.52,0.010), glassMat);
-      sf.position.set(0, h*0.28, fw*0.5+0.005); group.add(sf);
-      const aw = new THREE.Mesh(new THREE.BoxGeometry(fw*0.88,0.018,0.16), awMat);
-      aw.rotation.x = -0.28; aw.position.set(0, h*0.68, fw*0.5+0.05); group.add(aw);
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(fw*0.64,0.072,0.028), signMat);
-      sign.position.set(0, h*0.83, fw*0.5+0.018); group.add(sign);
-      windowMats.push(glassMat, signMat);
-
-    } else if (level === 2) {
-      const glassTex = this._glassCurtainTex(6, 9);
-      const glassMat = Std({ map: glassTex, roughness: 0.08, metalness: 0.12 });
-      const podMat   = Std({ color: 0x3a5080, roughness: 0.60, metalness: 0.12 });
-
-      const podH = h * 0.22;
-      const pod  = new THREE.Mesh(new THREE.BoxGeometry(fw*1.06,podH,fw*1.06), podMat);
-      pod.position.y = podH/2; pod.castShadow = pod.receiveShadow = true; group.add(pod);
-      const towerH = h - podH;
-      const tower  = new THREE.Mesh(new THREE.BoxGeometry(fw,towerH,fw), glassMat);
-      tower.position.y = podH+towerH/2; tower.castShadow = tower.receiveShadow = true; group.add(tower);
-
-      const bandMat = Std({ color: 0x224466, roughness: 0.50, metalness: 0.20 });
-      for (let fy = podH + h*0.18; fy < h - 0.04; fy += h*0.18) {
-        const band = new THREE.Mesh(new THREE.BoxGeometry(fw+0.024,0.016,fw+0.024), bandMat);
-        band.position.y = fy; group.add(band);
-      }
-      const mphMat = Std({ color: 0x777777, roughness: 0.50, metalness: 0.25 });
-      const mph = new THREE.Mesh(new THREE.BoxGeometry(fw*0.42,0.14,fw*0.42), mphMat);
-      mph.position.set(0, h+0.07, 0); group.add(mph);
-      windowMats.push(glassMat);
-
-    } else {
-      const glassTex = this._glassCurtainTex(8, 14);
-      const glassMat = Std({ map: glassTex, roughness: 0.06, metalness: 0.14 });
-      const concMat  = Std({ color: 0x334455, roughness: 0.55, metalness: 0.15 });
-
-      const tiers = [{ w: fw, th: h*0.48 }, { w: fw*0.70, th: h*0.30 }, { w: fw*0.44, th: h*0.22 }];
-      let yOff = 0;
-      for (const tier of tiers) {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(tier.w,tier.th,tier.w), glassMat);
-        m.position.y = yOff+tier.th/2; m.castShadow = m.receiveShadow = true; group.add(m);
-        if (yOff > 0) {
-          const ledge = new THREE.Mesh(new THREE.BoxGeometry(tier.w+0.06,0.025,tier.w+0.06), concMat);
-          ledge.position.y = yOff+0.012; group.add(ledge);
-        }
-        yOff += tier.th;
-      }
-
-      const ledMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
-      const ledRing = new THREE.Mesh(new THREE.TorusGeometry(tiers[2].w*0.4,0.022,7,28), ledMat);
-      ledRing.rotation.x = Math.PI/2; ledRing.position.y = yOff-0.04; group.add(ledRing);
-      group._ledRingMat = ledMat;
-
-      const spireMat = Std({ color: 0xcccccc, roughness: 0.30, metalness: 0.60 });
-      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.038,h*0.30,8), spireMat);
-      spire.position.y = yOff+h*0.15; group.add(spire);
-
-      const crownMat = Std({ color: 0x88ccff, roughness: 0.04, metalness: 0.10, transparent: true, opacity: 0.65 });
-      const crown = new THREE.Mesh(new THREE.SphereGeometry(tiers[2].w*0.32,10,8), crownMat);
-      crown.position.y = yOff; group.add(crown);
-
-      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.022,6,4), new THREE.MeshBasicMaterial({ color: 0xff2200 }));
-      beacon._isBeacon = true; beacon.position.y = yOff+h*0.30+0.002; group.add(beacon);
-      group._beacon = beacon;
-      windowMats.push(glassMat);
+      // Two-storey retail block with a glazed shopfront and lit signage.
+      const fac = this._zoneFacade(TILE.ZONE_COM, 2, hash);
+      group.add(this._kmesh(this.kit.box, fac, fw, h, fw, 0, h / 2, 0));
+      this._capRoof(group, fw, fw, h);
+      this._storefront(group, fw, h, fz, hash);
+      // awning over the shopfront
+      const aw = this._kmesh(this.kit.box, this.signMats[(hash >> 2) % this.signMats.length], fw * 0.88, 0.016, 0.16, 0, h * 0.5, fz + 0.06, false);
+      aw.rotation.x = -0.28; group.add(aw);
+      this._rooftop(group, fw, fw, h, hash, false);
+      group._windowMats = [fac];
+      return group;
     }
 
-    group._windowMats = windowMats;
+    const fac = this._zoneFacade(TILE.ZONE_COM, level, hash);
+
+    if (level === 2) {
+      // Podium + office tower.
+      const podH = Math.min(0.28, h * 0.22);
+      group.add(this._kmesh(this.kit.box, this.matPodium, fw * 1.08, podH, fw * 1.08, 0, podH / 2, 0));
+      const towerH = h - podH;
+      const slim = (hash & 1) ? 0.86 : 1.0;
+      group.add(this._kmesh(this.kit.box, fac, fw * slim, towerH, fw, 0, podH + towerH / 2, 0));
+      this._capRoof(group, fw * slim, fw, h);
+      this._rooftop(group, fw * slim, fw, h, hash, true);
+      this._storefront(group, fw, podH, fz, hash);
+      group._windowMats = [fac];
+      return group;
+    }
+
+    // ── Level 3: signature skyscraper ──
+    // Rare tiles become hero landmarks (supertall, observation deck, crown).
+    if (hash % 9 === 0) { this._heroTower(group, fw, h, hash, fac); this._storefront(group, fw, 0.3, fz, hash); group._windowMats = [fac]; return group; }
+
+    const style3 = hash % 3; // 0 art-deco · 1 modern setback · 2 curved round-glass
+    if (style3 === 2) {
+      // Curved round-glass tower (Dubai / Melbourne style), gently tapered.
+      const podH = Math.min(0.3, h * 0.16);
+      group.add(this._kmesh(this.kit.box, this.matPodium, fw * 1.08, podH, fw * 1.08, 0, podH / 2, 0));
+      const seg = h - podH, rad = fw * 0.5;
+      const lowerH = seg * 0.62, upperH = seg * 0.38;
+      group.add(this._kmesh(this.kit.cyl, fac, rad, lowerH, rad, 0, podH + lowerH / 2, 0));
+      group.add(this._kmesh(this.kit.cyl, this.matConc, rad + 0.02, 0.022, rad + 0.02, 0, podH + lowerH + 0.011, 0, false));
+      group.add(this._kmesh(this.kit.cyl, fac, rad * 0.82, upperH, rad * 0.82, 0, podH + lowerH + upperH / 2, 0));
+      const topY = podH + lowerH + upperH;
+      group.add(this._kmesh(this.kit.cyl, this.matRoofDeck, rad * 0.84, 0.02, rad * 0.84, 0, topY + 0.01, 0, false));
+      group.add(this._kmesh(this.kit.cyl, this.matConc, rad * 0.34, 0.09, rad * 0.34, 0, topY + 0.05, 0));
+      group.add(this._kmesh(this.kit.antenna, this.matSpire, 0.6, h * 0.14, 0.6, 0, topY + h * 0.07, 0));
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+      beacon._isBeacon = true; beacon.position.y = topY + h * 0.14 + 0.01; group.add(beacon);
+      group._beacon = beacon;
+      this._storefront(group, fw, podH, fz, hash);
+      group._windowMats = [fac];
+      return group;
+    }
+    const decoStyle = (style3 === 0);
+    if (decoStyle) {
+      // Art-deco stepped tower with a crown.
+      const tiers = [{ w: fw, th: h * 0.50 }, { w: fw * 0.74, th: h * 0.30 }, { w: fw * 0.5, th: h * 0.20 }];
+      let yOff = 0;
+      for (let ti = 0; ti < tiers.length; ti++) {
+        const tier = tiers[ti];
+        group.add(this._kmesh(this.kit.box, fac, tier.w, tier.th, tier.w, 0, yOff + tier.th / 2, 0));
+        if (yOff > 0) group.add(this._kmesh(this.kit.box, this.matConc, tier.w + 0.06, 0.028, tier.w + 0.06, 0, yOff + 0.014, 0, false));
+        yOff += tier.th;
+      }
+      const topW = tiers[2].w;
+      const spire = this._kmesh(this.kit.cyl8, this.matSpire, 0.02, h * 0.3, 0.02, 0, yOff + h * 0.15, 0);
+      group.add(spire);
+      const ledMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
+      const ledRing = new THREE.Mesh(new THREE.TorusGeometry(topW * 0.4, 0.022, 7, 26), ledMat);
+      ledRing.rotation.x = Math.PI / 2; ledRing.position.y = yOff - 0.03; group.add(ledRing);
+      group._ledRingMat = ledMat;
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+      beacon._isBeacon = true; beacon.position.y = yOff + h * 0.3 + 0.01; group.add(beacon);
+      group._beacon = beacon;
+      this._rooftop(group, topW, topW, yOff, hash, false);
+    } else {
+      // Modern slender glass tower with podium, helipad and antenna mast.
+      const podH = Math.min(0.3, h * 0.16);
+      group.add(this._kmesh(this.kit.box, this.matPodium, fw * 1.1, podH, fw * 1.1, 0, podH / 2, 0));
+      let cw = fw, cd = fw * ((hash & 1) ? 0.78 : 0.92), y0 = podH;
+      const tiers = 2 + (hash % 2);
+      for (let t = 0; t < tiers; t++) {
+        const th = (h - podH) / tiers;
+        group.add(this._kmesh(this.kit.box, fac, cw, th, cd, 0, y0 + th / 2, 0));
+        if (t > 0) group.add(this._kmesh(this.kit.box, this.matConc, cw + 0.04, 0.022, cd + 0.04, 0, y0 + 0.011, 0, false));
+        y0 += th; cw *= 0.88; cd *= 0.88;
+      }
+      this._capRoof(group, cw, cd, y0);
+      const hasMast = (hash & 4) === 0;
+      if ((hash & 2) && !hasMast) this._helipad(group, cw, cd, y0);
+      if (hasMast) {
+        // antenna mast + aviation beacon
+        group.add(this._kmesh(this.kit.antenna, this.matSpire, 0.6, h * 0.16, 0.6, 0, y0 + h * 0.08, 0));
+        const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+        beacon._isBeacon = true; beacon.position.y = y0 + h * 0.16 + 0.01; group.add(beacon);
+        group._beacon = beacon;
+      }
+      this._rooftop(group, cw, cd, y0, hash, false);
+    }
+    this._storefront(group, fw, 0.26, fz, hash);
+    group._windowMats = [fac];
     return group;
+  }
+
+  // A landmark supertall: tapered multi-setback shaft, a mid-height glazed
+  // observation deck, an illuminated animated crown and spire. Towers over its
+  // neighbours so it reads as a true city centrepiece.
+  _heroTower(group, fw, h, hash, fac) {
+    const H = h * 1.7;
+    const podH = Math.min(0.4, H * 0.08);
+    group.add(this._kmesh(this.kit.box, this.matPodium, fw * 1.2, podH, fw * 1.2, 0, podH / 2, 0));
+    const tiers = 5;
+    let cw = fw * 1.02, cd = fw * 1.02, y0 = podH;
+    const shaftH = H - podH;
+    for (let t = 0; t < tiers; t++) {
+      const th = shaftH / tiers;
+      group.add(this._kmesh(this.kit.box, fac, cw, th, cd, 0, y0 + th / 2, 0));
+      group.add(this._kmesh(this.kit.box, this.matConc, cw + 0.05, 0.024, cd + 0.05, 0, y0 + 0.012, 0, false));
+      if (t === tiers - 2) { // observation deck — cantilevered glazed band + rail
+        group.add(this._kmesh(this.kit.box, this.matDeck, cw + 0.12, th * 0.4, cd + 0.12, 0, y0 + th * 0.5, 0, false));
+        group.add(this._kmesh(this.kit.box, this.matSpire, cw + 0.14, 0.02, cd + 0.14, 0, y0 + th * 0.72, 0, false));
+      }
+      y0 += th; cw *= 0.86; cd *= 0.86;
+    }
+    const ledMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
+    const ledRing = new THREE.Mesh(new THREE.TorusGeometry(cw * 0.6, 0.02, 8, 28), ledMat);
+    ledRing.rotation.x = Math.PI / 2; ledRing.position.y = y0 + 0.02; group.add(ledRing);
+    group._ledRingMat = ledMat;
+    group.add(this._kmesh(this.kit.cyl8, this.matSpire, 0.018, H * 0.18, 0.018, 0, y0 + H * 0.09, 0));
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.024, 7, 5), new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+    beacon._isBeacon = true; beacon.position.y = y0 + H * 0.18 + 0.01; group.add(beacon);
+    group._beacon = beacon;
+    this._rooftop(group, cw, cd, y0, hash, false);
   }
 
   // ─────── Industrial buildings ───────
 
   buildIndustrial(x, y, T, level, rng) {
     const group = new THREE.Group();
-    const fw = T * (0.84 - level * 0.02);
+    const hash = this._hash(x, y);
+    const R = this._rng(hash);
+    const fw = T * 0.84;
     const h  = this._bldH(x, y, TILE.ZONE_IND, level);
-    const windowMats = [];
+    const fz = fw / 2;
 
-    const metalMat = Std({ map: this._corrugatedTex(), roughness: 0.80, metalness: 0.12 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(fw,h,fw), metalMat);
-    body.position.y = h/2; body.castShadow = body.receiveShadow = true; group.add(body);
-
-    const roofGeo = this._gabledRoofGeo(fw, fw, fw*0.26, 0.04);
-    const roofMat = Std({ map: this._corrugatedTex(), roughness: 0.82, metalness: 0.08, color: 0x888880 });
-    const roof = new THREE.Mesh(roofGeo, roofMat);
+    // Main shed
+    group.add(this._kmesh(this.kit.box, this.matIndWall, fw, h, fw, 0, h / 2, 0));
+    const roof = new THREE.Mesh(this._gabledRoofGeo(fw, fw, fw * 0.22, 0.04), this.matIndRoof);
     roof.position.y = h; roof.castShadow = true; group.add(roof);
+    // skylight strip
+    group.add(this._kmesh(this.kit.box, this.matBalGlass, fw * 0.16, 0.01, fw * 0.7, 0, h + fw * 0.2, 0, false));
 
-    const skyMat = Std({ color: 0x9ad4f5, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.55 });
-    const sky = new THREE.Mesh(new THREE.BoxGeometry(fw*0.18,0.010,fw*0.70), skyMat);
-    sky.position.set(0, h+fw*0.24, 0); group.add(sky);
+    // Office annex with real windows at the street face
+    const ofac = this._zoneFacade(TILE.ZONE_IND, 1, hash);
+    const oh = h * 0.6, ow = fw * 0.42;
+    group.add(this._kmesh(this.kit.box, ofac, ow, oh, fw * 0.3, fw * 0.26, oh / 2, fz - fw * 0.18));
+    this._capRoof(group, ow, fw * 0.3, oh);
 
-    const dockMat = Std({ color: 0x2a2a2a, roughness: 0.90, metalness: 0 });
-    const dock = new THREE.Mesh(new THREE.BoxGeometry(fw*0.34,h*0.42,0.055), dockMat);
-    dock.position.set(0, h*0.21, fw*0.5+0.028); group.add(dock);
-    const frameMat = Std({ color: 0xffee44, roughness: 0.50, metalness: 0.10, emissive: new THREE.Color(0.03,0.03,0) });
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(fw*0.36,0.014,0.022), frameMat);
-    frame.position.set(0, h*0.42+0.007, fw*0.5+0.028); group.add(frame);
+    // Loading dock + lit door frame
+    group.add(this._kmesh(this.kit.box, this.matDoor, fw * 0.34, h * 0.42, 0.05, -fw * 0.12, h * 0.21, fz + 0.026, false));
+    group.add(this._kmesh(this.kit.box, this.signMats[2], fw * 0.36, 0.014, 0.02, -fw * 0.12, h * 0.42, fz + 0.026, false));
+
+    // Roof vents
+    for (let i = 0; i < 3; i++) { const vr = 0.02 + R() * 0.015; group.add(this._kmesh(this.kit.cyl8, this.matVent, vr, 0.06, vr, (R() - 0.5) * fw * 0.6, h + 0.05, (R() - 0.5) * fw * 0.4)); }
 
     if (level >= 2) {
-      const stackMat = Std({ color: 0x888880, roughness: 0.70, metalness: 0.10 });
-      const ringMat  = Std({ color: 0xdd2222, roughness: 0.50, metalness: 0.15 });
-      const count = level === 3 ? 3 : 1;
-      for (let s = 0; s < count; s++) {
-        const sx = -fw*0.24 + s*fw*0.24;
-        const sh = h*(0.65 + rng*0.28);
-        const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.046,0.066,sh,10), stackMat);
-        stack.position.set(sx, h+sh/2, -fw*0.22); stack.castShadow = true; group.add(stack);
-        for (let r = 0; r < 3; r++) {
-          const ring = new THREE.Mesh(new THREE.TorusGeometry(0.060,0.011,6,12), ringMat);
-          ring.rotation.x = Math.PI/2; ring.position.set(sx, h+sh*(0.25+r*0.28), -fw*0.22); group.add(ring);
-        }
-        const smokeMat = Std({ color: 0x555550, roughness: 1.0, metalness: 0, transparent: true, opacity: 0.30 });
-        const smoke = new THREE.Mesh(new THREE.SphereGeometry(0.07,7,5), smokeMat);
-        smoke.position.set(sx, h+sh+0.08, -fw*0.22); group.add(smoke);
+      // Storage silos
+      const silos = level === 3 ? 3 : 2;
+      for (let s = 0; s < silos; s++) {
+        const sr = 0.07 + R() * 0.02, sh = h * (0.7 + R() * 0.4);
+        const sx = -fw * 0.3 + s * fw * 0.26;
+        group.add(this._kmesh(this.kit.cyl, this.matTank, sr, sh, sr, sx, sh / 2, -fw * 0.34));
+        group.add(this._kmesh(this.kit.cone, this.matRoofMetal, sr * 2, sr, sr * 2, sx, sh + sr / 2, -fw * 0.34, false));
       }
+      // Smokestacks with hazard rings
+      const stacks = level === 3 ? 2 : 1;
+      const ringMat = Std({ color: 0xdd2222, roughness: 0.5, metalness: 0.15 });
+      for (let s = 0; s < stacks; s++) {
+        const sx = fw * 0.2 - s * fw * 0.2, sh = h * (0.8 + R() * 0.3);
+        group.add(this._kmesh(this.kit.cyl, this.matRoofMetal, 0.05, sh, 0.05, sx, h + sh / 2, -fw * 0.2));
+        for (let r = 0; r < 3; r++) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.011, 6, 12), ringMat); ring.rotation.x = Math.PI / 2; ring.position.set(sx, h + sh * (0.3 + r * 0.28), -fw * 0.2); group.add(ring); }
+      }
+      // Pipe rack along one side
+      const pipe = this._kmesh(this.kit.cyl8, this.matPipe, 0.025, fw * 0.7, 0.025, -fz - 0.02, h * 0.4, 0);
+      pipe.rotation.x = Math.PI / 2; group.add(pipe);
     }
 
     if (level === 3) {
+      // Gantry crane over the yard
       const craneMat = Std({ color: 0xdd9900, roughness: 0.45, metalness: 0.45 });
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(fw*0.9,0.030,0.040), craneMat);
-      beam.position.set(0, h-0.06, 0); group.add(beam);
-      for (const bx of [-fw*0.35, fw*0.35]) {
-        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,h-0.06,7), craneMat);
-        col.position.set(bx, (h-0.06)/2, 0); group.add(col);
-      }
+      group.add(this._kmesh(this.kit.box, craneMat, fw * 0.9, 0.03, 0.04, 0, h - 0.06, 0, false));
+      for (const bx of [-fw * 0.35, fw * 0.35]) group.add(this._kmesh(this.kit.cyl8, craneMat, 0.018, h - 0.06, 0.018, bx, (h - 0.06) / 2, 0));
     }
 
-    windowMats.push(metalMat);
-    group._windowMats = windowMats;
+    group._windowMats = [ofac];
     return group;
   }
 
@@ -1028,8 +1339,10 @@ class ModelBuilder {
 
   _bldH(x, y, zone, level) {
     const rng = this._tileRng(x, y);
-    const base = { [TILE.ZONE_RES]:[0,0.40,1.00,1.90],[TILE.ZONE_COM]:[0,0.50,1.30,3.20],[TILE.ZONE_IND]:[0,0.55,0.95,1.50] };
-    const vary = { [TILE.ZONE_RES]:[0,0.10,0.35,0.80],[TILE.ZONE_COM]:[0,0.10,0.50,1.80],[TILE.ZONE_IND]:[0,0.15,0.25,0.40] };
+    // Heights in world units (1 unit = 1 tile). Level-3 commercial reaches
+    // skyscraper proportions so the downtown core dominates the skyline.
+    const base = { [TILE.ZONE_RES]:[0,0.42,1.40,3.40],[TILE.ZONE_COM]:[0,0.55,2.00,6.00],[TILE.ZONE_IND]:[0,0.60,1.00,1.60] };
+    const vary = { [TILE.ZONE_RES]:[0,0.12,0.50,1.60],[TILE.ZONE_COM]:[0,0.15,0.80,3.00],[TILE.ZONE_IND]:[0,0.15,0.30,0.50] };
     return base[zone][level] + vary[zone][level] * rng;
   }
 
