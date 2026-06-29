@@ -58,11 +58,23 @@ class Government {
     this.lobby = {};
     LOBBY_GROUPS.forEach(gp => { this.lobby[gp.id] = { satisfaction: 50, influence: gp.influence }; });
 
+    // ── Ideology, bureaucracy & mayoral pledges ──
+    this.ideology = { growthMult: 1, happyAdd: 0, construction: 1 };
+    this.departments = {
+      planning:  { eff: 0.6, name: 'Urban Planning', icon: '📐' },
+      transport: { eff: 0.6, name: 'Transport Authority', icon: '🚦' },
+      finance:   { eff: 0.6, name: 'Finance Dept', icon: '🏦' },
+      emergency: { eff: 0.6, name: 'Emergency Services', icon: '🚑' },
+    };
+    this.promises = [];
+    this._promiseBaseTax = 1; this._promiseBaseDebt = 0; this._promiseBasePop = 0;
+
     this._computeDrivers();
     this._recomputeEffects();
     this._allocateSeats(this._popularVote());
     this._formGovernment();
     this._computeBudget();
+    this._setPromises();
   }
 
   year() { return Math.floor(this.game.sim.week / this.config.weeksPerYear) + 1; }
@@ -227,6 +239,7 @@ class Government {
 
   // ───────────────────────── Elections ─────────────────────────
   runElection() {
+    this._settlePromises();                 // judge the outgoing term's pledges
     const popular = this._popularVote();
     const districts = this._districtVotes();
     this._allocateSeats(popular);
@@ -241,6 +254,7 @@ class Government {
     this.nextElectionWeek = this.game.sim.week + this.config.electionYears * this.config.weeksPerYear;
     this.politicalCapital = Math.min(12, this.politicalCapital + 3);
     this.approval = polClamp(50 + (this.approval - 50) * 0.4, 35, 65);
+    this._setPromises();                    // new government makes new pledges
     const winName = PARTY_BY_ID[this.rulingParty].name;
     this._pushNews(prevRuling === this.rulingParty
       ? `${winName} re-elected to lead the council.`
@@ -356,15 +370,112 @@ class Government {
       e.growthMult *= 1 - 0.12 * this.protest.severity;
       protestHappy = -0.06 * this.protest.severity;
     }
+    // The ruling coalition's ideology tilts the whole city, not just its laws.
+    this._recomputeIdeology();
+    // An efficient Finance Dept collects tax better; a captured one leaks it.
+    const fin = this.departments ? this.departments.finance.eff : 0.6;
+    e.taxMult *= 0.94 + fin * 0.10;
     this.effects = e;
     // Push additive, default-neutral modifiers the simulation already reads.
     this.game.sim.policyMods = {
       taxMult: e.taxMult,
-      growthMult: e.growthMult,
-      happyAdd: e.happyAdd + this.tempHappy + protestHappy,
+      growthMult: e.growthMult * this.ideology.growthMult,
+      happyAdd: e.happyAdd + this.tempHappy + protestHappy + this.ideology.happyAdd,
       upkeepAdd: e.upkeepAdd,
       revenueAdd: e.revenueAdd,
     };
+  }
+
+  // Average ideology vector of the governing coalition.
+  _coalitionVec() {
+    const v = { econ: 0, env: 0, auth: 0, social: 0, nat: 0 };
+    const ids = (this.coalition && this.coalition.length) ? this.coalition : [this.rulingParty];
+    let n = 0;
+    for (const id of ids) { const p = PARTY_BY_ID[id]; if (!p) continue; for (const k of POL_AXES) v[k] += p.vec[k] || 0; n++; }
+    if (n) for (const k of POL_AXES) v[k] /= n;
+    return v;
+  }
+
+  // Translate that ideology into city-wide behavioural tilts (5.2): a growth-
+  // first government builds faster but greener ones rein it in, etc.
+  _recomputeIdeology() {
+    const v = this._coalitionVec();
+    this.ideology = {
+      growthMult: polClamp(1 + v.econ * 0.05 - v.env * 0.04, 0.85, 1.15),
+      happyAdd: v.env * 0.02 - v.auth * 0.02,
+      construction: polClamp(1 + v.econ * 0.06 - v.env * 0.05, 0.8, 1.2),
+    };
+  }
+
+  // Bureaucratic throughput on construction & permitting (read by Construction).
+  constructionFactor() {
+    const planning = this.departments ? this.departments.planning.eff : 0.6;
+    return (0.6 + planning * 0.6) * (this.ideology ? this.ideology.construction : 1);
+  }
+
+  // Departments drift toward an efficiency set by approval, funding & graft (5.5).
+  _tickDepartments() {
+    if (!this.departments) return;
+    const net = this.budget ? this.budget.net : 0;
+    const fund = net >= 0 ? 0.06 : -0.06;
+    const base = 0.55 + (this.approval - 50) / 200 - this.corruption / 300 + fund;
+    for (const k in this.departments) {
+      let t = base;
+      if (k === 'emergency') t += (this.stability - 50) / 300;
+      if (k === 'finance' && this.creditRating === 'AAA') t += 0.05;
+      this.departments[k].eff += (polClamp(t, 0.2, 1) - this.departments[k].eff) * 0.1;
+    }
+  }
+
+  // ── Mayoral pledges (5.1): each election the new government commits to terms
+  // that become binding; breaking one costs approval and makes news. ──
+  _setPromises() {
+    const v = this._coalitionVec();
+    this._promiseBaseTax = this.game.sim.taxRate;
+    this._promiseBaseDebt = this.debt;
+    this._promiseBasePop = this.game.sim.population;
+    const pool = [];
+    pool.push(v.econ >= 0
+      ? { id: 'lowtax', label: 'Keep taxes low', broken: false }
+      : { id: 'services', label: 'Protect public services', broken: false });
+    pool.push({ id: 'nodebt', label: 'No big new borrowing', broken: false });
+    pool.push(v.env > 0.2
+      ? { id: 'green', label: 'Pass a green law this term', broken: false, term: true }
+      : { id: 'growth', label: 'Grow the city this term', broken: false, term: true });
+    this.promises = pool;
+  }
+
+  _promiseViolated(p) {
+    const sim = this.game.sim;
+    if (p.id === 'lowtax') return sim.taxRate > this._promiseBaseTax + 0.12;
+    if (p.id === 'services') return this.effects.upkeepAdd < -150;       // gutted spending
+    if (p.id === 'nodebt') return this.debt > this._promiseBaseDebt + 15000;
+    return false;
+  }
+
+  _checkPromises() {
+    for (const p of this.promises) {
+      if (p.broken || p.term) continue;
+      if (this._promiseViolated(p)) {
+        p.broken = true;
+        this.approval = polClamp(this.approval - 5, 0, 100);
+        this.media.bias = polClamp(this.media.bias - 12, -100, 100);
+        this._pushNews(`Broken promise: the mayor pledged to "${p.label}".`, 'Breaking', null);
+      }
+    }
+  }
+
+  // Settle end-of-term ("term") pledges at the next election.
+  _settlePromises() {
+    const envLaws = ['emissions', 'green_energy', 'transit', 'building_codes'];
+    for (const p of this.promises) {
+      if (!p.term || p.broken) continue;
+      let kept = true;
+      if (p.id === 'green') kept = envLaws.some(id => this.activeLaws.has(id));
+      if (p.id === 'growth') kept = this.game.sim.population >= this._promiseBasePop * 0.95;
+      if (kept) { this.approval = polClamp(this.approval + 4, 0, 100); }
+      else { this.approval = polClamp(this.approval - 6, 0, 100); this._pushNews(`Unkept pledge: "${p.label}".`, 'Newspaper', null); }
+    }
   }
 
   // ───────────────────────── Budget / treasury ─────────────────────────
@@ -543,11 +654,13 @@ class Government {
 
   // ───────────────────────── Lobbying, corruption, propagation ─────────────────────────
   _tickPolitics() {
-    // 1) Laws phase in over ~8 weeks (faster if the city is well-run).
-    const ramp = 0.12 + (this.approval - 50) / 1000;
+    // 1) Laws phase in over time — faster if the city is well-run and the
+    //    Urban Planning dept is efficient; bureaucratic decay slows it (5.5).
+    const planning = this.departments ? this.departments.planning.eff : 0.6;
+    const ramp = (0.12 + (this.approval - 50) / 1000) * (0.5 + planning * 0.7);
     for (const id of this.activeLaws) {
       const p = this.lawProgress[id];
-      if (p != null && p < 1) this.lawProgress[id] = Math.min(1, p + Math.max(0.05, ramp));
+      if (p != null && p < 1) this.lawProgress[id] = Math.min(1, p + Math.max(0.03, ramp));
     }
 
     // 2) Lobby groups react to which of their priorities are law.
@@ -647,7 +760,9 @@ class Government {
     this._lastWeek = week;
 
     this._computeDrivers();
+    this._tickDepartments();                                  // bureaucratic efficiency drift
     this._tickPolitics();                                     // propagation, lobbying, corruption
+    this._checkPromises();                                    // binding mayoral pledges
     if (this.protest && this.protest.weeksLeft > 0) {         // wind down an active protest
       this.protest.weeksLeft--;
       if (this.protest.weeksLeft <= 0) { this._pushNews('Protests subside; the streets clear.', 'Newspaper', null); this.protest = null; }
@@ -676,6 +791,8 @@ class Government {
       news: this.news.slice(0, 20), lastElection: this.lastElection, eventCooldown: this.eventCooldown,
       lawProgress: this.lawProgress, corruption: this.corruption, scandals: this.scandals.slice(0, 8),
       protest: this.protest, lobby: this.lobby, dealCooldown: this.dealCooldown,
+      departments: this.departments, promises: this.promises,
+      promiseBase: { tax: this._promiseBaseTax, debt: this._promiseBaseDebt, pop: this._promiseBasePop },
     };
   }
 
@@ -703,6 +820,9 @@ class Government {
     this.protest = data.protest || null;
     this.dealCooldown = data.dealCooldown ?? this.dealCooldown;
     if (data.lobby) for (const id in data.lobby) if (this.lobby[id]) Object.assign(this.lobby[id], data.lobby[id]);
+    if (data.departments) for (const id in data.departments) if (this.departments[id]) this.departments[id].eff = data.departments[id].eff ?? this.departments[id].eff;
+    if (data.promises) this.promises = data.promises;
+    if (data.promiseBase) { this._promiseBaseTax = data.promiseBase.tax; this._promiseBaseDebt = data.promiseBase.debt; this._promiseBasePop = data.promiseBase.pop; }
     this._computeDrivers();
     this._recomputeEffects();
     this._computeBudget();

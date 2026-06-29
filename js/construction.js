@@ -53,7 +53,10 @@ class Construction {
     // Budget: cities in the red build slower; deep debt stalls everything.
     const money = g.sim ? g.sim.money : 0;
     const bf = money < -1500 ? 0.15 : money < -200 ? 0.55 : money < 0 ? 0.8 : 1;
-    return wf * ef * bf;
+    // Governance: planning-dept throughput + ruling ideology (growth-first builds
+    // faster, green/austere governments slow permitting).
+    const gov = (g.gov && g.gov.constructionFactor) ? g.gov.constructionFactor() : 1;
+    return wf * ef * bf * gov;
   }
 
   // Per-week progress increment for one project (taller targets take longer).

@@ -246,6 +246,20 @@ class PoliticsUI {
       ? g.scandals.slice(0, 5).map(s => `<div class="bill-mini"><span class="chip bad">scandal</span> ${s.what} <span class="muted">Yr ${s.year}</span></div>`).join('')
       : '<div class="muted" style="padding:6px">No scandals on record. Keep it clean.</div>';
 
+    // City departments (bureaucracy)
+    const depts = g.departments ? Object.keys(g.departments).map(k => {
+      const d = g.departments[k]; const pct = Math.round(d.eff * 100);
+      const col = pct > 65 ? 'var(--good)' : pct < 40 ? 'var(--bad)' : 'var(--warn)';
+      return `<div class="lobby-row"><div class="lobby-head"><span>${d.icon} ${d.name}</span><span class="poll-pct">${pct}%</span></div>${this._bar(pct, col)}</div>`;
+    }).join('') : '';
+
+    // Mayoral pledges
+    const pledges = (g.promises && g.promises.length) ? g.promises.map(p => {
+      const cls = p.broken ? 'bad' : 'good';
+      const label = p.broken ? 'broken' : (p.term ? 'this term' : 'kept');
+      return `<div class="bill-mini"><span class="chip ${cls}">${label}</span> ${p.label}</div>`;
+    }).join('') : '<div class="muted" style="padding:6px">No active pledges.</div>';
+
     return `
       <div class="gov-cards">
         <div class="gov-card"><div class="gc-label">Corruption</div><div class="gc-big" style="color:${corrColor}">${corr}%</div>${this._bar(corr, corrColor)}</div>
@@ -253,6 +267,8 @@ class PoliticsUI {
       </div>
       ${protest}
       ${deal}
+      <div class="gov-section"><h4>Mayoral pledges</h4>${pledges}</div>
+      <div class="gov-section"><h4>City departments</h4>${depts}</div>
       <div class="gov-section"><h4>Lobby groups</h4>${groups}</div>
       <div class="gov-section"><h4>Scandal sheet</h4>${scandals}</div>
     `;
