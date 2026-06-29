@@ -44,6 +44,7 @@ class Renderer3D {
     this.levelCache = new Uint8Array(grid.w * grid.h).fill(255);
     this.vehiclePool  = [];
     this.citizenPool  = [];
+    this.accidentPool = [];        // pooled crash markers (cones + smoke)
     this.timeOfDay = 0.35;
     this.nightFactor = 0;
     this.overlayMode = null;
@@ -660,6 +661,12 @@ class Renderer3D {
         let v = 0, col = null;
         if (mode === 'power')        { v = g.power[i] ? 1 : 0; col = [250, 204, 21]; }
         else if (mode === 'water')   { v = g.water[i] ? 1 : 0; col = [56, 189, 248]; }
+        else if (mode === 'congestion') {
+          if (g.type[i] === TILE.ROAD && g.congestion) {
+            v = Math.min(1, g.congestion[i] * 1.1);
+            col = [Math.round(80 + 175 * v), Math.round(200 * (1 - v) + 40), 50];   // green→red
+          }
+        }
         else if (mode === 'services'){ v = f ? Math.min(1, (f.safety[i] + f.health[i] + f.happy[i] + f.education[i]) / 2) : 0; col = [192, 132, 252]; }
         else if (mode === 'desirability') {
           const util = (g.power[i] ? 0.5 : 0) + (g.water[i] ? 0.5 : 0);
@@ -842,6 +849,8 @@ class Renderer3D {
 
     const n = this.nightFactor;
     const hi = Math.max(0, (n - 0.45) * 1.1);
+    const flash = (performance.now() / 130) | 0;     // ~7.5Hz emergency strobe
+    const blue = flash & 1;
 
     for (let k = 0; k < veh.length; k++) {
       const v = veh[k];
@@ -852,6 +861,15 @@ class Renderer3D {
       g.position.set(wx, 0.04, wz);
       if (dx !== 0 || dz !== 0) g.rotation.y = Math.atan2(-dx, -dz);
 
+      if (v.emergency) {
+        // strobing red/blue light bar on the whole body
+        g.traverse(child => {
+          if (!child.isMesh || !child.material || !child.material.emissive) return;
+          if (blue) child.material.emissive.setRGB(0.05, 0.1, 0.9);
+          else child.material.emissive.setRGB(0.9, 0.05, 0.05);
+        });
+        continue;
+      }
       g.traverse(child => {
         if (!child.isMesh || !child.material) return;
         const mat = child.material;
@@ -861,6 +879,38 @@ class Renderer3D {
           mat.emissive.setRGB(hi * 0.6, 0, 0);
         }
       });
+    }
+  }
+
+  // ─────────────────────── Accident markers ───────────────────────
+
+  _buildAccidentMarker() {
+    const grp = new THREE.Group();
+    const coneGeo = new THREE.ConeGeometry(0.06, 0.16, 8);
+    const coneMat = new THREE.MeshStandardMaterial({ color: 0xff7a18, roughness: 0.6, emissive: new THREE.Color(0x3a1500) });
+    for (const ox of [-0.18, 0, 0.18]) {
+      const c = new THREE.Mesh(coneGeo, coneMat);
+      c.position.set(ox, 0.08, 0); grp.add(c);
+    }
+    const smokeMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 1, transparent: true, opacity: 0.4 });
+    const smoke = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), smokeMat);
+    smoke.position.set(0, 0.34, 0); grp._smoke = smoke; grp.add(smoke);
+    return grp;
+  }
+
+  _updateAccidents(traffic) {
+    if (!traffic) return;
+    const acc = traffic.accidents || [], T = this.T;
+    while (this.accidentPool.length < acc.length) {
+      const m = this._buildAccidentMarker();
+      this.scene.add(m); this.accidentPool.push(m);
+    }
+    for (let k = 0; k < this.accidentPool.length; k++) this.accidentPool[k].visible = k < acc.length;
+    const tm = performance.now() / 1000;
+    for (let k = 0; k < acc.length; k++) {
+      const a = acc[k], m = this.accidentPool[k];
+      m.position.set((a.x + 0.5) * T, 0, (a.y + 0.5) * T);
+      if (m._smoke) { m._smoke.position.y = 0.30 + Math.sin(tm * 2 + k) * 0.05; m._smoke.material.opacity = 0.3 + Math.sin(tm * 3 + k) * 0.12; }
     }
   }
 
@@ -920,6 +970,7 @@ class Renderer3D {
   draw(traffic, citizens) {
     this._updateDayNight();
     this._updateVehicles(traffic);
+    this._updateAccidents(traffic);
     this._updateCitizens(citizens);
     this._animateMarker();
     this.wgl.render(this.scene, this.camera);

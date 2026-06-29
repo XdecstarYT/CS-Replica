@@ -109,7 +109,8 @@ class Simulation {
       const pmG = this.policyMods ? (this.policyMods.growthMult ?? 1) : 1;
       const ecG = this.econMods   ? (this.econMods.growthMult ?? 1)   : 1;
       const enG = this.envMods    ? (this.envMods.growthMult ?? 1)    : 1;
-      const gm = pmG * ecG * enG;
+      const trG = this.trafficMods ? (this.trafficMods.growthMult ?? 1) : 1;
+      const gm = pmG * ecG * enG * trG;
       const target = Math.min(cap, Math.round(cap * (0.4 + quality * 0.6) * gm));
       if (g.pop[i] < target) g.pop[i] += Math.ceil((target - g.pop[i]) * 0.3);
       else g.pop[i] = target;
@@ -130,6 +131,7 @@ class Simulation {
     if (this.policyMods) happyAdd += (this.policyMods.happyAdd || 0);
     if (this.econMods)   happyAdd += (this.econMods.happyAdd   || 0);
     if (this.envMods)    happyAdd += (this.envMods.happyAdd    || 0);
+    if (this.trafficMods) happyAdd += (this.trafficMods.happyAdd || 0);
     if (happyAdd) this.happiness = clamp01(this.happiness + happyAdd);
 
     // ---- Demand model (RCI) ----

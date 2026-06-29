@@ -18,6 +18,7 @@ class Game {
     this.statsUI = new StatsUI(this);
     this.renderer.weatherSys = this.weather;   // renderer reads weather for sky/precip
     this.renderer.construction = this.construction; // renderer reads build-site state
+    this.traffic.weatherSys = this.weather;    // wet roads raise accident risk
     this.dayLength = 90000; // ms per full day/night cycle (real time)
 
     this.tool = 'select';
@@ -167,6 +168,9 @@ class Game {
       this.accum += dt * speed;
       while (this.accum >= CONFIG.TICK_MS) {
         this.accum -= CONFIG.TICK_MS;
+        // Traffic congestion feeds back into the city: jams sap happiness & growth.
+        const cong = this.traffic.avgCongestion || 0;
+        this.sim.trafficMods = { happyAdd: -cong * 0.12, growthMult: 1 - cong * 0.08 };
         const res = this.sim.step();
         this.construction.tick();      // advance staged build projects
         this.renderer.syncBuildings(); // update grown buildings / live sites in 3D
