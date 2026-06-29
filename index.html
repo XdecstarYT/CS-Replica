@@ -38,6 +38,12 @@
         <span class="hud-icon">&#127963;</span>
         <span class="hud-value" id="gov-approval">50%</span>
       </button>
+      <button class="hud-stat clickable" id="btn-stats" title="Statistics Centre">
+        <span class="hud-icon">&#128202;</span>
+      </button>
+      <button class="hud-stat clickable" id="stat-weather" title="Weather &amp; season">
+        <span class="hud-value" id="weather-value">&#9728;&#65039; 15&deg;</span>
+      </button>
       <button class="hud-stat clickable" id="btn-menu" title="Menu">&#9776;</button>
     </header>
 
@@ -140,6 +146,17 @@
     <!-- Election night overlay -->
     <div id="gov-election" class="overlay hidden"></div>
 
+    <!-- Statistics Centre -->
+    <div id="stats-panel" class="panel hidden gov-panel">
+      <div class="panel-head">
+        <span>&#128202; Statistics Centre</span>
+        <button class="panel-close" id="stats-close">&times;</button>
+      </div>
+      <div class="stats-summary" id="stats-summary"></div>
+      <div class="gov-tabs" id="stats-tabs"></div>
+      <div class="gov-body" id="stats-body"></div>
+    </div>
+
     <!-- Help / intro overlay -->
     <div id="help-overlay" class="overlay">
       <div class="overlay-card">
@@ -170,6 +187,10 @@
   <script src="js/models.js"></script>
   <script src="js/render3d.js"></script>
   <script src="js/advisor.js"></script>
+  <script src="js/economy.js"></script>
+  <script src="js/weather.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/stats_ui.js"></script>
   <script src="js/politics/parties.js"></script>
   <script src="js/politics/laws.js"></script>
   <script src="js/politics/events.js"></script>

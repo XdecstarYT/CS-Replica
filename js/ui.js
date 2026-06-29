@@ -19,6 +19,7 @@ class UI {
       help: document.getElementById('help-overlay'),
       taxSlider: document.getElementById('tax-slider'),
       taxReadout: document.getElementById('tax-readout'),
+      weatherValue: document.getElementById('weather-value'),
       // ARIA AI advisor
       aiBtnGrade: document.getElementById('ai-grade'),
       aiPanel: document.getElementById('ai-panel'),
@@ -81,6 +82,9 @@ class UI {
     this.el.aiPanel.classList.toggle('hidden', !show);
     if (show) {
       this.hideServicePicker();
+      ['gov-panel', 'stats-panel', 'menu-panel'].forEach(id => {
+        const e = document.getElementById(id); if (e) e.classList.add('hidden');
+      });
       this.renderAI();
     }
   }
@@ -272,6 +276,12 @@ class UI {
       const g = this.game.ai.report.grade;
       this.el.aiBtnGrade.textContent = g;
       this.el.aiBtnGrade.dataset.grade = g;
+    }
+
+    // Weather chip
+    if (this.el.weatherValue && this.game.weather) {
+      const wi = this.game.weather.info();
+      this.el.weatherValue.textContent = `${wi.weather.icon} ${wi.temperature}°`;
     }
   }
 

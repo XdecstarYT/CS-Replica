@@ -40,6 +40,9 @@ class PoliticsUI {
   toggle() { this.el.panel.classList.contains('hidden') ? this.open() : this.close(); }
   open() {
     if (this.game.ui) this.game.ui.hideServicePicker();
+    ['ai-panel', 'stats-panel', 'menu-panel'].forEach(id => {
+      const e = document.getElementById(id); if (e) e.classList.add('hidden');
+    });
     this.el.panel.classList.remove('hidden');
     this.render();
   }

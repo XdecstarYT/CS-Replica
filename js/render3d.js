@@ -49,6 +49,8 @@ class Renderer3D {
     this.overlayMode = null;
     this._winDirty = true;
     this._lastWin = -1;
+    this.weatherSys = null;        // set by Game; drives sky/fog/precipitation
+    this._buildWeather();
     this.raycaster = new THREE.Raycaster();
     this._groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -184,6 +186,88 @@ class Renderer3D {
       this.scene.add(group);
       this.clouds.push({ group, speed: 0.18 + Math.random() * 0.35, baseZ: group.position.z });
     }
+  }
+
+  // ─────────────────────── Weather (precipitation) ───────────────────────
+  _buildWeather() {
+    // A single recycled point cloud handles rain & snow. Particles fall within
+    // a moving box centred on the camera target; cheap and scales independently
+    // of city size.
+    const N = 1400;
+    this._precipCount = N;
+    const pos = new Float32Array(N * 3);
+    this._precipVel = new Float32Array(N);     // fall speed per particle
+    this._precipBox = 46;                       // half-extent of the spawn box
+    for (let i = 0; i < N; i++) {
+      pos[i * 3]     = (Math.random() - 0.5) * this._precipBox * 2;
+      pos[i * 3 + 1] = Math.random() * 30;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * this._precipBox * 2;
+      this._precipVel[i] = 0.5 + Math.random() * 0.5;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this._precipGeo = geo;
+    this._precipMat = new THREE.PointsMaterial({
+      color: 0xaecbff, size: 0.10, transparent: true, opacity: 0.0,
+      depthWrite: false, sizeAttenuation: true,
+    });
+    this._precip = new THREE.Points(geo, this._precipMat);
+    this._precip.frustumCulled = false;
+    this._precip.visible = false;
+    this._precip.renderOrder = 5;
+    this.scene.add(this._precip);
+  }
+
+  _updateWeather(d) {
+    const sys = this.weatherSys;
+    if (!sys || !this._precip) return;
+    const info = sys.info();
+    const kind = info.current;
+    const intensity = info.intensity;
+    const isRain = kind === 'rain' || kind === 'storm';
+    const isSnow = kind === 'snow';
+    const active = isRain || isSnow;
+
+    // Precipitation particles
+    this._precip.visible = active;
+    if (active) {
+      const cx = this.camTarget.x, cz = this.camTarget.z;
+      const pos = this._precipGeo.attributes.position.array;
+      const box = this._precipBox;
+      const fall = (isSnow ? 0.10 : 0.55) * (0.6 + intensity);
+      const drift = isSnow ? 0.06 : 0.0;
+      for (let i = 0; i < this._precipCount; i++) {
+        let y = pos[i * 3 + 1] - fall * this._precipVel[i];
+        if (y < 0) {
+          y = 26 + Math.random() * 6;
+          pos[i * 3]     = (Math.random() - 0.5) * box * 2;
+          pos[i * 3 + 2] = (Math.random() - 0.5) * box * 2;
+        }
+        pos[i * 3 + 1] = y;
+        if (drift) pos[i * 3] += Math.sin((y + i) * 0.6) * drift;
+      }
+      // keep the field following the camera
+      this._precip.position.set(cx, 0, cz);
+      this._precipGeo.attributes.position.needsUpdate = true;
+      this._precipMat.color.setHex(isSnow ? 0xffffff : 0xaecbff);
+      this._precipMat.size = isSnow ? 0.16 : 0.09;
+      this._precipMat.opacity = (isSnow ? 0.85 : 0.5) * Math.min(1, 0.4 + intensity);
+    }
+
+    // Sky / fog / light modulation by weather (multiplicative on day/night)
+    const w = info.weather;
+    const overcast = (w.cloud || 0) * intensity;
+    if (overcast > 0.01) {
+      // desaturate & darken sky toward storm-grey
+      const grey = new THREE.Color(0x5a6472);
+      this.scene.background.lerp(grey, overcast * 0.6 * d);
+      this.scene.fog.color.lerp(grey, overcast * 0.6 * d);
+    }
+    // Fog thickens with rain/snow/fog weather
+    const extraFog = (w.fog || 0) * 0.02 * intensity + (w.precip || 0) * 0.006 * intensity;
+    this.scene.fog.density = 0.011 + extraFog;
+    // Dim the sun under heavy cloud
+    if (overcast > 0.01) this.sunLight.intensity *= (1 - overcast * 0.5);
   }
 
   _initMaterials() {
@@ -642,6 +726,9 @@ class Renderer3D {
 
     // Stars
     this.starMat.opacity = Math.max(0, (n - 0.55) * 2.5);
+
+    // Weather overlay: precipitation + sky/fog/light modulation
+    this._updateWeather(d);
 
     // Clouds drift + dim at night
     const tm = performance.now() / 1000;

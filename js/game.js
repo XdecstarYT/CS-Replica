@@ -9,8 +9,13 @@ class Game {
     this.citizens = new Citizens(this.grid);
     this.ai = new CityAI(this);
     this.gov = new Government(this);
+    this.economy = new Economy(this);
+    this.weather = new Weather(this);
+    this.stats = new Stats(this);
     this.ui = new UI(this);
     this.politicsUI = new PoliticsUI(this);
+    this.statsUI = new StatsUI(this);
+    this.renderer.weatherSys = this.weather;   // renderer reads weather for sky/precip
     this.dayLength = 90000; // ms per full day/night cycle (real time)
 
     this.tool = 'select';
@@ -149,8 +154,10 @@ class Game {
     this.renderer.timeOfDay = (this.renderer.timeOfDay + dt / this.dayLength * (0.5 + speed * 0.5)) % 1;
     this.traffic.sync(Math.round(this.sim.population / 12) + (this.sim.jobsC + this.sim.jobsI) / 20);
     this.citizens.sync(this.sim.population);
-    if (speed > 0) this.traffic.update(dt * Math.min(speed, 2));
-    if (speed > 0) this.citizens.update(dt * Math.min(speed, 2));
+    // Weather slows traffic & pedestrians (rain/snow/fog).
+    const wSpeed = (this.sim.envMods && this.sim.envMods.trafficSpeed) || 1;
+    if (speed > 0) this.traffic.update(dt * Math.min(speed, 2) * wSpeed);
+    if (speed > 0) this.citizens.update(dt * Math.min(speed, 2) * wSpeed);
 
     if (speed > 0) {
       this.accum += dt * speed;
@@ -170,6 +177,12 @@ class Game {
         // ── Government & politics weekly tick ──
         this.gov.tick();
 
+        // ── Economy, weather & statistics weekly tick ──
+        this.economy.tick();
+        this.weather.tick();
+        this.stats.sample();
+        if (this.statsUI) this.statsUI.update();
+
         if (res.bankrupt && !this._warnedBankrupt) {
           this._warnedBankrupt = true;
           this.ui.toast('⚠ City is bankrupt! Cut services or raise population.');
@@ -188,7 +201,11 @@ class Game {
   // ---- Persistence ----
   save(silent) {
     try {
-      const data = { grid: this.grid.serialize(), sim: this.sim.serialize(), gov: this.gov.serialize(), v: 1 };
+      const data = {
+        grid: this.grid.serialize(), sim: this.sim.serialize(), gov: this.gov.serialize(),
+        economy: this.economy.serialize(), weather: this.weather.serialize(), stats: this.stats.serialize(),
+        v: 2,
+      };
       localStorage.setItem(CONFIG.AUTOSAVE_KEY, JSON.stringify(data));
       if (!silent) this.ui.toast('City saved');
     } catch (e) {
@@ -210,6 +227,9 @@ class Game {
       this.ai.reset();
       this.gov.reset();
       if (data.gov) this.gov.load(data.gov);
+      this.economy.reset(); if (data.economy) this.economy.load(data.economy);
+      this.weather.reset();  if (data.weather) this.weather.load(data.weather);
+      this.stats.reset();    if (data.stats) this.stats.load(data.stats);
       this.politicsUI.reset();
       if (!silent) this.ui.toast('City loaded');
       return true;
@@ -227,6 +247,9 @@ class Game {
     this.citizens.setGrid(this.grid);
     this.ai.reset();
     this.gov.reset();
+    this.economy.reset();
+    this.weather.reset();
+    this.stats.reset();
     this.politicsUI.reset();
     this.renderer.setOverlay(null);
     this.ui.toast('New city founded');

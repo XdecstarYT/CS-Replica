@@ -102,8 +102,11 @@ class Simulation {
       else if (g.level[i] > wantLevel && Math.random() < 0.25) g.level[i]--;
 
       const cap = (BUILDING_LEVELS[t][g.level[i]] || { cap: 0 }).cap;
-      // occupancy eases toward capacity scaled by quality (and policy growth).
-      const gm = this.policyMods ? (this.policyMods.growthMult ?? 1) : 1;
+      // occupancy eases toward capacity scaled by quality, policy + economy growth.
+      const pmG = this.policyMods ? (this.policyMods.growthMult ?? 1) : 1;
+      const ecG = this.econMods   ? (this.econMods.growthMult ?? 1)   : 1;
+      const enG = this.envMods    ? (this.envMods.growthMult ?? 1)    : 1;
+      const gm = pmG * ecG * enG;
       const target = Math.min(cap, Math.round(cap * (0.4 + quality * 0.6) * gm));
       if (g.pop[i] < target) g.pop[i] += Math.ceil((target - g.pop[i]) * 0.3);
       else g.pop[i] = target;
@@ -119,8 +122,12 @@ class Simulation {
     this.jobsC = com;
     this.jobsI = ind;
     this.happiness = happinessN ? happinessSum / happinessN : 0.5;
-    // Politics hook: laws/policies nudge happiness (additive, neutral by default).
-    if (this.policyMods) this.happiness = clamp01(this.happiness + (this.policyMods.happyAdd || 0));
+    // Additive happiness nudges from politics, economy and weather (neutral by default).
+    let happyAdd = 0;
+    if (this.policyMods) happyAdd += (this.policyMods.happyAdd || 0);
+    if (this.econMods)   happyAdd += (this.econMods.happyAdd   || 0);
+    if (this.envMods)    happyAdd += (this.envMods.happyAdd    || 0);
+    if (happyAdd) this.happiness = clamp01(this.happiness + happyAdd);
 
     // ---- Demand model (RCI) ----
     // Residential demand rises when there are jobs relative to residents.
@@ -137,7 +144,10 @@ class Simulation {
     // ---- Budget ----
     const citizensServed = res + com + ind;
     const pm = this.policyMods || {};
-    const tax = citizensServed * TAX_PER_CAPITA * this.taxRate * (0.6 + this.happiness * 0.6) * (pm.taxMult ?? 1) + (pm.revenueAdd || 0);
+    const em = this.econMods || {};
+    const en = this.envMods || {};
+    const tax = citizensServed * TAX_PER_CAPITA * this.taxRate * (0.6 + this.happiness * 0.6)
+              * (pm.taxMult ?? 1) * (em.taxMult ?? 1) + (pm.revenueAdd || 0);
     let upkeep = 0;
     let roadCount = 0;
     for (let i = 0; i < g.type.length; i++) {
@@ -149,6 +159,7 @@ class Simulation {
     }
     upkeep += roadCount * UPKEEP_PER_ROAD;
     upkeep += (pm.upkeepAdd || 0);   // policy upkeep / debt servicing (can be negative = savings)
+    upkeep += (en.upkeepAdd || 0);   // weather heating/cooling load
     this.lastBalance = Math.round(tax - upkeep);
     this.money += this.lastBalance;
     this.week++;

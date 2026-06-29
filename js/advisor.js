@@ -285,6 +285,17 @@ class CityAI {
     if (fc.trend === 'booming') add('good', '🚀', 'City is booming', `Population climbing ~${Math.abs(fc.popSlope).toFixed(1)}/wk. Projected ${fc.pop10.toLocaleString()} within 10 wks.`);
     else if (fc.trend === 'shrinking' && st.occupied > 0) add('warn', '🔻', 'Population shrinking', 'People are leaving. Check power, jobs and happiness — usually one is the cause.');
 
+    // Macro-economy awareness
+    const eco = this.game.economy;
+    if (eco && st.occupied > 0) {
+      if (eco.phase === 'recession' || eco.phase === 'depression') {
+        add('warn', '📉', `Economy in ${eco.phaseInfo().label.toLowerCase()}`, `Unemployment is ${(eco.unemployment * 100).toFixed(0)}% and confidence is low. Avoid tax hikes; growth will be slow until recovery.`);
+      } else if (eco.phase === 'expansion' || eco.phase === 'peak') {
+        add('good', '📈', 'Economy is expanding', `GDP growth ~${(eco.gdpGrowth * 100).toFixed(1)}%. A strong window to zone aggressively and capture demand.`);
+      }
+      if (eco.inflation > 0.06) add('warn', '🔥', 'High inflation', `Inflation is ${(eco.inflation * 100).toFixed(1)}%. Costs are rising — watch your budget and debt servicing.`);
+    }
+
     // Stage-specific advice
     if (stage === 'early' && st.roads > 0 && z > 0 && !st.services['power']) {
       add('tip', '🔌', 'Connect the grid', 'Your city has no power plant yet — zones near power grow much faster.', { service: 'power' });
