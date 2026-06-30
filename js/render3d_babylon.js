@@ -19,14 +19,23 @@ class Renderer3D {
     this.grid = grid;
     this.T = 1.0;
 
-    this.engine = new B.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: true }, true);
-    this.engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 2));
+    this.engine = new B.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: true, powerPreference: 'high-performance' }, false);
+    // Render at ~device-independent resolution (NOT 2×/3×) so phones stay fast.
+    // A little above CSS pixels keeps it crisp without melting the GPU.
+    const dpr = window.devicePixelRatio || 1;
+    this._targetScale = (dpr > 2) ? dpr / 1.5 : 1;     // ≈1.3–2× cap
+    this.engine.setHardwareScalingLevel(this._targetScale);
     this.scene = new B.Scene(this.engine);
     this.scene.clearColor = B.Color4.FromHexString('#87ceebff');
     this.scene.ambientColor = new B.Color3(0.4, 0.45, 0.55);
     this.scene.fogMode = B.Scene.FOGMODE_EXP2;
     this.scene.fogDensity = 0.011;
     this.scene.fogColor = new B.Color3(0.53, 0.81, 0.92);
+    // PERFORMANCE: never auto-pick the scene on pointer-move. Without this,
+    // Babylon ray-casts against every mesh on each move event, which makes
+    // dragging the camera crawl in a dense city. We do our own ray/plane pick.
+    this.scene.skipPointerMovePicking = true;
+    this.scene.constantlyUpdateMeshUnderPointer = false;
 
     // ── Camera (manual spherical placement; input3d drives the params) ──
     this.camTarget = new B.Vector3(grid.w * this.T / 2, 0, grid.h * this.T / 2);
@@ -60,7 +69,11 @@ class Renderer3D {
     this._buildWater();
     this.rebuildAll();
     this.resize();
-    window.addEventListener('resize', () => this.resize());
+    // Robust resize on every viewport change mobile browsers can throw at us.
+    const onResize = () => this.resize();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
   }
 
   // ─────────────────────── Setup ───────────────────────
@@ -73,14 +86,20 @@ class Renderer3D {
 
     this.sun = new B.DirectionalLight('sun', new B.Vector3(-0.5, -1, -0.4), this.scene);
     this.sun.position = new B.Vector3(this.camTarget.x + 40, 80, this.camTarget.z - 30);
-    this.sun.intensity = 2.0;
-    this.sun.diffuse = new B.Color3(1.0, 0.95, 0.82);
+    this.sun.intensity = 2.1;
+    this.sun.diffuse = new B.Color3(1.0, 0.94, 0.80);
+    this.sun.specular = new B.Color3(1, 0.96, 0.85);
 
-    this.shadow = new B.ShadowGenerator(2048, this.sun);
-    this.shadow.useBlurExponentialShadowMap = true;
-    this.shadow.blurKernel = 16;
-    this.shadow.darkness = 0.55;
-    this._shadowList = this.shadow.getShadowMap().renderList;
+    // Lighter shadows for mobile: 1024 map, PCF, refreshed every few frames
+    // (the city is static and the sun moves slowly, so this is plenty).
+    this.shadow = new B.ShadowGenerator(1024, this.sun);
+    this.shadow.usePercentageCloserFiltering = true;
+    this.shadow.filteringQuality = B.ShadowGenerator.QUALITY_LOW;
+    this.shadow.darkness = 0.4;
+    this.shadow.bias = 0.0015;
+    const smap = this.shadow.getShadowMap();
+    smap.refreshRate = B.RenderTargetTexture.REFRESHRATE_RENDER_ONEVERYTWOFRAMES;
+    this._shadowList = smap.renderList;
   }
 
   // High-end post-processing: HDR pipeline with ACES tone mapping, bloom on the
@@ -90,38 +109,25 @@ class Renderer3D {
     const B = this.B;
     try {
       const pl = new B.DefaultRenderingPipeline('hdr', true, this.scene, [this.camera]);
-      pl.samples = 4;                         // MSAA
+      pl.samples = 1;                         // rely on FXAA (MSAA is costly on mobile)
       pl.fxaaEnabled = true;
-      pl.bloomEnabled = true;
-      pl.bloomThreshold = 0.62;
-      pl.bloomWeight = 0.55;
-      pl.bloomKernel = 64;
+      pl.bloomEnabled = true;                 // cheap, big payoff on lit windows/crowns
+      pl.bloomThreshold = 0.70;
+      pl.bloomWeight = 0.5;
+      pl.bloomKernel = 48;
       pl.bloomScale = 0.5;
       pl.imageProcessingEnabled = true;
       const ip = pl.imageProcessing;
       ip.toneMappingEnabled = true;
       ip.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
-      ip.exposure = 1.1;
-      ip.contrast = 1.12;
+      ip.exposure = 1.15;
+      ip.contrast = 1.15;
       ip.vignetteEnabled = true;
-      ip.vignetteWeight = 1.6;
+      ip.vignetteWeight = 1.2;
       ip.vignetteColor = new B.Color4(0, 0, 0, 0);
-      pl.sharpenEnabled = true;
-      pl.sharpen.edgeAmount = 0.18;
       this.pipeline = pl;
       this._ip = ip;
     } catch (e) { /* pipeline optional — game still renders without it */ }
-
-    // SSAO ambient occlusion (guarded — falls back gracefully if unsupported).
-    try {
-      const ssao = new B.SSAO2RenderingPipeline('ssao', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
-      ssao.radius = 1.4;
-      ssao.totalStrength = 0.9;
-      ssao.expensiveBlur = true;
-      ssao.samples = 16;
-      ssao.base = 0.18;
-      this.ssao = ssao;
-    } catch (e) { /* SSAO optional */ }
   }
 
   _buildSky() {
@@ -166,8 +172,25 @@ class Renderer3D {
     const B = this.B, g = this.grid;
     if (this.ground) { this.ground.dispose(); this.ground = null; }
     const mat = new B.StandardMaterial('groundmat', this.scene);
-    mat.diffuseColor = new B.Color3(0.50, 0.62, 0.42);
-    mat.specularColor = new B.Color3(0.02, 0.02, 0.02);
+    if (!this._groundTex) {
+      // Subtle baked grass/earth noise so the ground reads as terrain, not paint.
+      const S = 256;
+      const dt = new B.DynamicTexture('grass', { width: S, height: S }, this.scene, true);
+      const c = dt.getContext();
+      c.fillStyle = '#5a7048'; c.fillRect(0, 0, S, S);
+      for (let i = 0; i < 4000; i++) {
+        const x = Math.random() * S, y = Math.random() * S;
+        const sh = 0.6 + Math.random() * 0.5;
+        c.fillStyle = `rgba(${Math.round(74 * sh)},${Math.round(102 * sh)},${Math.round(60 * sh)},0.5)`;
+        c.fillRect(x, y, 2, 2);
+      }
+      dt.update();
+      dt.wrapU = dt.wrapV = B.Texture.WRAP_ADDRESSMODE;
+      dt.uScale = dt.vScale = g.w / 4;
+      this._groundTex = dt;
+    }
+    mat.diffuseTexture = this._groundTex;
+    mat.specularColor = new B.Color3(0.02, 0.03, 0.02);
     const ground = B.MeshBuilder.CreateGround('ground', { width: g.w * this.T, height: g.h * this.T, subdivisions: 1 }, this.scene);
     ground.position.set(g.w * this.T / 2, -0.002, g.h * this.T / 2);
     ground.material = mat;
@@ -310,6 +333,9 @@ class Renderer3D {
       } else {
         const { root } = this.models.buildBuilding(t, built, x, y, T);
         root.position.set(cx, 0, cz); nodes.push(root); this._addShadow(root);
+        // Static building → freeze world matrices (big perf win; it never moves).
+        root.computeWorldMatrix(true);
+        for (const m of root.getChildMeshes(false)) { m.computeWorldMatrix(true); m.freezeWorldMatrix(); m.isPickable = false; m.doNotSyncBoundingInfo = true; }
       }
     } else if (t === TILE.SERVICE) {
       const svc = SERVICE_BY_ID[g.service[i]];
