@@ -48,6 +48,60 @@ class Grid {
     }
   }
 
+  // Grow the map outward (east + south), preserving every existing tile at its
+  // original (x,y). All typed arrays are reallocated; index math changes because
+  // the width changes, so callers must re-point any index-keyed caches.
+  expand(addW, addH) {
+    addW = addW | 0; addH = addH | 0;
+    if (addW <= 0 && addH <= 0) return false;
+    const ow = this.w, oh = this.h;
+    const nw = ow + addW, nh = oh + addH;
+    const n = nw * nh;
+    const type = new Uint8Array(n).fill(TILE.GRASS);
+    const level = new Uint8Array(n);
+    const built = new Uint8Array(n);
+    const service = new Array(n).fill(null);
+    const pop = new Uint16Array(n);
+    for (let y = 0; y < oh; y++) {
+      for (let x = 0; x < ow; x++) {
+        const oi = y * ow + x, ni = y * nw + x;
+        type[ni] = this.type[oi];
+        level[ni] = this.level[oi];
+        built[ni] = this.built ? this.built[oi] : this.level[oi];
+        service[ni] = this.service[oi];
+        pop[ni] = this.pop[oi];
+      }
+    }
+    this.w = nw; this.h = nh;
+    this.type = type; this.level = level; this.built = built;
+    this.service = service; this.pop = pop;
+    this.power = new Uint8Array(n);
+    this.water = new Uint8Array(n);
+    this.land = new Float32Array(n);
+    this._extendTerrain(ow, oh);
+    return { ow, oh, nw, nh };
+  }
+
+  // Scatter a little natural terrain (a lake) into the freshly added land so
+  // new districts aren't a featureless plain. Only grass tiles are converted,
+  // so nothing the player already built can be clobbered.
+  _extendTerrain(ow, oh) {
+    const lakes = [];
+    if (this.w > ow) lakes.push([ow + (this.w - ow) * 0.55, this.h * 0.4, 4]);
+    if (this.h > oh) lakes.push([this.w * 0.3, oh + (this.h - oh) * 0.55, 4]);
+    for (const [cx, cy, r] of lakes) {
+      for (let y = Math.floor(cy - r); y <= cy + r; y++) {
+        for (let x = Math.floor(cx - r); x <= cx + r; x++) {
+          if (!this.inBounds(x, y)) continue;
+          if (x < ow && y < oh) continue;                    // never touch original area
+          const i = this.idx(x, y);
+          if (this.type[i] !== TILE.GRASS) continue;          // only fill empty grass
+          if (Math.hypot(x - cx, y - cy) <= r + Math.sin(x + y) * 0.6) this.type[i] = TILE.WATER;
+        }
+      }
+    }
+  }
+
   isBuildable(x, y) {
     if (!this.inBounds(x, y)) return false;
     return this.type[this.idx(x, y)] !== TILE.WATER;

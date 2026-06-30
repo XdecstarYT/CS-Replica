@@ -13,9 +13,11 @@ class Game {
     this.economy = new Economy(this);
     this.weather = new Weather(this);
     this.stats = new Stats(this);
+    this.automayor = new AutoMayor(this);
     this.ui = new UI(this);
     this.politicsUI = new PoliticsUI(this);
     this.statsUI = new StatsUI(this);
+    this.mode = 'mayor';   // 'mayor' (you build) | 'observer' (government builds)
     this.renderer.weatherSys = this.weather;   // renderer reads weather for sky/precip
     this.renderer.construction = this.construction; // renderer reads build-site state
     this.traffic.weatherSys = this.weather;    // wet roads raise accident risk
@@ -186,6 +188,12 @@ class Game {
         // ── Government & politics weekly tick ──
         this.gov.tick();
 
+        // ── Observer mode: the elected government builds the city itself ──
+        if (this.mode === 'observer') {
+          this.automayor.tick();
+          this.ui.updateObserver();
+        }
+
         // ── Economy, weather & statistics weekly tick ──
         this.economy.tick();
         this.weather.tick();
@@ -214,6 +222,7 @@ class Game {
         grid: this.grid.serialize(), sim: this.sim.serialize(), gov: this.gov.serialize(),
         economy: this.economy.serialize(), weather: this.weather.serialize(), stats: this.stats.serialize(),
         construction: this.construction.serialize(),
+        mode: this.mode,
         v: 3,
       };
       localStorage.setItem(CONFIG.AUTOSAVE_KEY, JSON.stringify(data));
@@ -245,12 +254,68 @@ class Game {
       this.weather.reset();  if (data.weather) this.weather.load(data.weather);
       this.stats.reset();    if (data.stats) this.stats.load(data.stats);
       this.politicsUI.reset();
+      this.automayor.reset();
+      // Restore game mode (quietly — don't reset the camera/tool mid-load).
+      this.mode = (data.mode === 'observer') ? 'observer' : 'mayor';
+      document.body.classList.toggle('observer-mode', this.mode === 'observer');
+      const banner = document.getElementById('observer-banner');
+      if (banner) banner.classList.toggle('hidden', this.mode !== 'observer');
       if (!silent) this.ui.toast('City loaded');
       return true;
     } catch (e) {
       if (!silent) this.ui.toast('Load failed');
       return false;
     }
+  }
+
+  // ---- Game mode (Mayor vs Observer) ----
+  setMode(mode) {
+    this.mode = (mode === 'observer') ? 'observer' : 'mayor';
+    document.body.classList.toggle('observer-mode', this.mode === 'observer');
+    const banner = document.getElementById('observer-banner');
+    if (banner) banner.classList.toggle('hidden', this.mode !== 'observer');
+    if (this.mode === 'observer') {
+      this.automayor.reset();
+      // Drop any active build tool so taps just pan while spectating.
+      this.selectTool('select', document.querySelector('.tool[data-tool="select"]'));
+      this.ui.hideServicePicker();
+      if (this.speedIndex === 0) { this.speedIndex = 1; this.ui.update(); }   // ensure time runs
+      this.ui.updateObserver();
+    }
+  }
+
+  // ---- Map expansion ----
+  // Grow the map outward. Because the grid width changes, every index-keyed
+  // cache must be remapped: we snapshot construction projects by (x,y), expand,
+  // then re-point all subsystems to the (mutated, same-reference) grid.
+  expandMap(add) {
+    add = add || 16;
+    const cost = 8000;
+    if (this.sim.money < cost) { this._deny(`Need $${cost.toLocaleString()} to expand`); return false; }
+    if (this.grid.w >= 160) { this._deny('Map is already at maximum size'); return false; }
+    this.sim.money -= cost;
+
+    const ow = this.grid.w;
+    // Snapshot in-progress construction by world coords (indices are about to shift).
+    const projXY = [];
+    for (const [i, p] of this.construction.projects) projXY.push([i % ow, (i / ow) | 0, p]);
+
+    const r = this.grid.expand(add, add);
+    if (!r) { this.sim.money += cost; return false; }
+
+    // Re-point subsystems. The grid object is the same reference (mutated in
+    // place), so sim/gov already see the new dimensions; caches need realloc.
+    this.sim.grid = this.grid;
+    this.traffic.setGrid(this.grid);
+    this.citizens.setGrid(this.grid);
+    this.construction.grid = this.grid;
+    this.construction.projects.clear();
+    for (const [x, y, p] of projXY) this.construction.projects.set(this.grid.idx(x, y), p);
+    this.renderer.setGrid(this.grid);
+    if (this.renderer.overlayMode) this.renderer.updateOverlay(this.sim);
+
+    this.ui.toast(`City expanded to ${this.grid.w}×${this.grid.h}`);
+    return true;
   }
 
   newCity() {
@@ -266,6 +331,7 @@ class Game {
     this.weather.reset();
     this.stats.reset();
     this.politicsUI.reset();
+    this.automayor.reset();
     this.renderer.setOverlay(null);
     this.ui.toast('New city founded');
   }

@@ -796,51 +796,93 @@ class ModelBuilder {
     return group;
   }
 
-  // ─────── Vehicle builders ───────
+  // ─────── Vehicle builders (realistic procedural cars) ───────
+  //
+  // Real-world-inspired silhouettes built from layered boxes: a wide lower
+  // sill, a tapered greenhouse set back over the rear axle, sloped hood &
+  // trunk, a dark glasshouse, chrome grille, bumpers, wing mirrors and proper
+  // head/tail lamps. Realistic automotive paint palette. Eight body styles
+  // including a city bus and a delivery truck for street variety.
 
-  vehicleColors = [0xd4cdc0, 0xc0392b, 0x2980b9, 0x27ae60, 0xf39c12, 0x8e44ad, 0xf0f0ee, 0x2c3e50, 0xe67e22, 0x16a085, 0xd35400, 0x1abc9c];
+  vehicleColors = [
+    0xf2f2f4, 0xe8e8ea, 0x111418, 0x1c1f24,   // white / silver / black / graphite
+    0xb01818, 0xc0392b, 0x143d7a, 0x2563a8,   // reds & blues
+    0x1f6b3a, 0x4a5560, 0x6b7280, 0x8a8f98,   // green / gunmetal / greys
+    0xb8860b, 0xc97f1a, 0x7a3b8c, 0x0e7c86,   // gold / orange / purple / teal
+  ];
+
+  // Weighted body-style mix so the streets read like a real city: mostly
+  // sedans/hatch/SUV, occasional pickup/sports/van/taxi, rare bus.
+  _vehicleMix = [0,0,0,1,1,2,2,2,3,4,5,7,0,1,2,6];
 
   buildVehicle(index) {
-    const type = index % 5;
+    const type = this._vehicleMix[index % this._vehicleMix.length];
     const color = this.vehicleColors[index % this.vehicleColors.length];
     const group = new THREE.Group();
-    const bodyMat = Std({ color, roughness: 0.25, metalness: 0.35 });
+    // Two-tone-capable PBR body paint with a faint clearcoat sheen.
+    const bodyMat = Std({ color, roughness: 0.30, metalness: 0.45 });
+    group._bodyMat = bodyMat;
 
-    if (type === 0) this._buildSedan(group, bodyMat);
+    if      (type === 0) this._buildSedan(group, bodyMat);
     else if (type === 1) this._buildSUV(group, bodyMat);
-    else if (type === 2) this._buildVan(group, bodyMat);
+    else if (type === 2) this._buildHatch(group, bodyMat);
     else if (type === 3) this._buildPickup(group, bodyMat);
-    else this._buildSports(group, bodyMat);
+    else if (type === 4) this._buildSports(group, bodyMat);
+    else if (type === 5) this._buildVan(group, bodyMat);
+    else if (type === 6) this._buildBus(group, bodyMat, index);
+    else                 this._buildTaxi(group, bodyMat);
 
     this._addWheels(group, type);
-    this._addCarLights(group, type);
+    if (type !== 6) this._addCarLights(group, type);
     return group;
   }
 
+  // Shared trims
+  _chromeMat() { return this._cMat || (this._cMat = Std({ color: 0xb8bcc4, roughness: 0.2, metalness: 0.9 })); }
+  _trimMat()   { return this._tMat || (this._tMat = Std({ color: 0x14161a, roughness: 0.6, metalness: 0.3 })); }
+
   _addWheels(group, type) {
+    // per-type axle half-track (fx), axle z position (rz), wheel radius scale (s), height (y)
     const o = [
-      { fx: 0.070, rz: 0.064, y: 0.037 },
-      { fx: 0.074, rz: 0.069, y: 0.041 },
-      { fx: 0.064, rz: 0.088, y: 0.037 },
-      { fx: 0.070, rz: 0.078, y: 0.038 },
-      { fx: 0.070, rz: 0.060, y: 0.033 },
+      { fx: 0.066, rz: 0.072, y: 0.036, s: 1.00 },  // sedan
+      { fx: 0.070, rz: 0.078, y: 0.042, s: 1.18 },  // SUV
+      { fx: 0.064, rz: 0.058, y: 0.034, s: 0.95 },  // hatch
+      { fx: 0.068, rz: 0.082, y: 0.040, s: 1.15 },  // pickup
+      { fx: 0.068, rz: 0.072, y: 0.030, s: 0.92 },  // sports
+      { fx: 0.066, rz: 0.086, y: 0.044, s: 1.12 },  // van
+      { fx: 0.072, rz: 0.118, y: 0.050, s: 1.45 },  // bus
+      { fx: 0.066, rz: 0.072, y: 0.036, s: 1.00 },  // taxi
     ][type];
-    for (const [wx, wy, wz] of [[-o.fx, o.y, o.rz],[o.fx, o.y, o.rz],[-o.fx, o.y, -o.rz],[o.fx, o.y, -o.rz]]) {
+    const wheelZ = type === 6 ? [-o.rz, o.rz] : [-o.rz, o.rz];
+    for (const wz of wheelZ) for (const sx of [-o.fx, o.fx]) {
       const w = new THREE.Mesh(this.wheelGeo, this.wheelMat);
-      w.rotation.z = Math.PI / 2; w.position.set(wx, wy, wz); group.add(w);
+      w.rotation.z = Math.PI / 2; w.scale.set(o.s, 1, o.s); w.position.set(sx, o.y, wz); group.add(w);
       const hub = new THREE.Mesh(this.hubGeo, this.hubMat);
-      hub.rotation.z = Math.PI / 2; hub.position.set(wx + (wx < 0 ? -0.013 : 0.013), wy, wz); group.add(hub);
+      hub.rotation.z = Math.PI / 2; hub.scale.set(o.s, 1, o.s);
+      hub.position.set(sx + (sx < 0 ? -0.012 : 0.012), o.y, wz); group.add(hub);
     }
   }
 
   _addCarLights(group, type) {
-    const hlMat = Std({ color: 0xffffee, roughness: 0.05, metalness: 0, emissive: new THREE.Color(0.5, 0.5, 0.3) });
-    const tlMat = Std({ color: 0xff1800, roughness: 0.08, metalness: 0, emissive: new THREE.Color(0.4, 0.0, 0.0) });
-    const lgeo = new THREE.BoxGeometry(0.017, 0.010, 0.007);
-    const fz = [0.075, 0.088, 0.098, 0.070, 0.074][type];
-    for (const sx of [-0.051, 0.051]) {
-      const hl = new THREE.Mesh(lgeo, hlMat); hl.position.set(sx, 0.054, fz); group.add(hl);
-      const tl = new THREE.Mesh(lgeo, tlMat); tl.position.set(sx, 0.054, -fz); group.add(tl);
+    const hlMat = Std({ color: 0xfffbe8, roughness: 0.04, metalness: 0, emissive: new THREE.Color(0.45, 0.45, 0.3) });
+    const tlMat = Std({ color: 0xd81818, roughness: 0.08, metalness: 0, emissive: new THREE.Color(0.35, 0.0, 0.0) });
+    // [front z, rear z, head half-spacing, lamp width, body y]
+    const cfg = [
+      [0.106, 0.104, 0.046, 0.020, 0.052],  // sedan
+      [0.112, 0.110, 0.050, 0.022, 0.062],  // SUV
+      [0.090, 0.088, 0.046, 0.020, 0.050],  // hatch
+      [0.118, 0.108, 0.050, 0.020, 0.058],  // pickup
+      [0.104, 0.102, 0.048, 0.024, 0.044],  // sports
+      [0.118, 0.116, 0.046, 0.022, 0.066],  // van
+      [0,0,0,0,0],                          // bus (own lights)
+      [0.106, 0.104, 0.046, 0.020, 0.052],  // taxi
+    ][type];
+    const [fz, rz, hs, lw, by] = cfg;
+    const hgeo = new THREE.BoxGeometry(lw, 0.011, 0.006);
+    const tgeo = new THREE.BoxGeometry(lw * 1.1, 0.013, 0.006);
+    for (const sx of [-hs, hs]) {
+      const hl = new THREE.Mesh(hgeo, hlMat); hl.position.set(sx, by, fz); group.add(hl);
+      const tl = new THREE.Mesh(tgeo, tlMat); tl.position.set(sx, by, -rz); group.add(tl);
     }
   }
 
@@ -854,36 +896,138 @@ class ModelBuilder {
     return mesh;
   }
 
+  // Wing mirrors on both sides at the A-pillar.
+  _addMirrors(g, m, z, halfW, y) {
+    const geo = new THREE.BoxGeometry(0.016, 0.010, 0.012);
+    for (const sx of [-halfW - 0.008, halfW + 0.008]) g.add(this._part(geo, m, sx, y, z));
+  }
+
+  // Chrome grille + front bumper.
+  _addFrontEnd(g, frontZ, halfW, y) {
+    const grille = this._part(new THREE.BoxGeometry(halfW * 1.5, 0.018, 0.006), this._trimMat(), 0, y, frontZ + 0.001);
+    g.add(grille);
+    const bumper = this._part(new THREE.BoxGeometry(halfW * 1.9, 0.014, 0.018), this._trimMat(), 0, y - 0.014, frontZ - 0.004);
+    g.add(bumper);
+  }
+
   _buildSedan(g, m) {
-    g.add(this._part(new THREE.BoxGeometry(0.130,0.048,0.220), m, 0,0.058,0));
-    g.add(this._part(new THREE.BoxGeometry(0.102,0.040,0.110), this.glassMat, 0,0.104,-0.012));
-    const hoodMat = Std({ color: m.color.getHex(), roughness: 0.25, metalness: 0.35 });
-    g.add(this._part(new THREE.BoxGeometry(0.130,0.012,0.058), hoodMat, 0,0.074,0.098, 0.22,0,0));
+    // lower body
+    g.add(this._part(new THREE.BoxGeometry(0.120, 0.034, 0.234), m, 0, 0.050, 0));
+    // shoulder line / mid body
+    g.add(this._part(new THREE.BoxGeometry(0.128, 0.026, 0.214), m, 0, 0.066, 0));
+    // greenhouse (cabin) set slightly back
+    g.add(this._part(new THREE.BoxGeometry(0.112, 0.040, 0.108), m, 0, 0.090, -0.006));
+    // glasshouse
+    g.add(this._part(new THREE.BoxGeometry(0.114, 0.034, 0.100), this.glassMat, 0, 0.094, -0.006));
+    // sloped hood & trunk
+    g.add(this._part(new THREE.BoxGeometry(0.118, 0.012, 0.060), m, 0, 0.078, 0.092, 0.16, 0, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.118, 0.012, 0.050), m, 0, 0.078, -0.094, -0.14, 0, 0));
+    this._addMirrors(g, this._trimMat(), 0.040, 0.064, 0.084);
+    this._addFrontEnd(g, 0.114, 0.064, 0.052);
   }
 
   _buildSUV(g, m) {
-    g.add(this._part(new THREE.BoxGeometry(0.140,0.062,0.240), m, 0,0.066,0));
-    g.add(this._part(new THREE.BoxGeometry(0.122,0.050,0.142), this.glassMat, 0,0.116,-0.008));
-    const rackMat = Std({ color: 0x444444, roughness: 0.5, metalness: 0.6 });
-    g.add(this._part(new THREE.BoxGeometry(0.110,0.007,0.120), rackMat, 0,0.143,-0.010));
+    g.add(this._part(new THREE.BoxGeometry(0.130, 0.056, 0.244), m, 0, 0.064, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.122, 0.046, 0.150), m, 0, 0.106, -0.006));
+    g.add(this._part(new THREE.BoxGeometry(0.124, 0.040, 0.142), this.glassMat, 0, 0.108, -0.006));
+    // roof rails
+    const rackMat = this._trimMat();
+    for (const sx of [-0.048, 0.048]) g.add(this._part(new THREE.BoxGeometry(0.006, 0.006, 0.130), rackMat, sx, 0.132, -0.006));
+    // cladding sills
+    g.add(this._part(new THREE.BoxGeometry(0.136, 0.014, 0.230), rackMat, 0, 0.044, 0));
+    this._addMirrors(g, rackMat, 0.052, 0.068, 0.098);
+    this._addFrontEnd(g, 0.120, 0.068, 0.060);
   }
 
-  _buildVan(g, m) {
-    g.add(this._part(new THREE.BoxGeometry(0.130,0.098,0.240), m, 0,0.074,0));
-    g.add(this._part(new THREE.BoxGeometry(0.112,0.056,0.010), this.glassMat, 0,0.088,0.118));
+  _buildHatch(g, m) {
+    g.add(this._part(new THREE.BoxGeometry(0.116, 0.038, 0.190), m, 0, 0.052, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.108, 0.044, 0.110), m, 0, 0.086, -0.018));
+    g.add(this._part(new THREE.BoxGeometry(0.110, 0.038, 0.102), this.glassMat, 0, 0.090, -0.018));
+    // short sloped hood
+    g.add(this._part(new THREE.BoxGeometry(0.112, 0.012, 0.052), m, 0, 0.072, 0.080, 0.18, 0, 0));
+    // steep hatch rear
+    g.add(this._part(new THREE.BoxGeometry(0.108, 0.040, 0.012), this.glassMat, 0, 0.082, -0.092, -0.30, 0, 0));
+    this._addMirrors(g, this._trimMat(), 0.034, 0.060, 0.080);
+    this._addFrontEnd(g, 0.096, 0.060, 0.050);
   }
 
   _buildPickup(g, m) {
-    g.add(this._part(new THREE.BoxGeometry(0.130,0.060,0.120), m, 0,0.062,0.042));
-    g.add(this._part(new THREE.BoxGeometry(0.112,0.044,0.098), this.glassMat, 0,0.108,0.042));
-    g.add(this._part(new THREE.BoxGeometry(0.130,0.028,0.118), m, 0,0.046,-0.072));
+    // cab
+    g.add(this._part(new THREE.BoxGeometry(0.126, 0.052, 0.124), m, 0, 0.062, 0.052));
+    g.add(this._part(new THREE.BoxGeometry(0.116, 0.044, 0.092), m, 0, 0.100, 0.058));
+    g.add(this._part(new THREE.BoxGeometry(0.118, 0.038, 0.084), this.glassMat, 0, 0.102, 0.058));
+    // bed walls
+    g.add(this._part(new THREE.BoxGeometry(0.126, 0.044, 0.012), m, 0, 0.060, -0.108));
+    for (const sx of [-0.057, 0.057]) g.add(this._part(new THREE.BoxGeometry(0.012, 0.040, 0.118), m, sx, 0.058, -0.050));
+    g.add(this._part(new THREE.BoxGeometry(0.126, 0.030, 0.118), m, 0, 0.050, -0.050));
+    this._addMirrors(g, this._trimMat(), 0.106, 0.066, 0.092);
+    this._addFrontEnd(g, 0.116, 0.066, 0.058);
   }
 
   _buildSports(g, m) {
-    g.add(this._part(new THREE.BoxGeometry(0.122,0.036,0.218), m, 0,0.048,0));
-    g.add(this._part(new THREE.BoxGeometry(0.092,0.030,0.088), this.glassMat, 0,0.079,-0.010));
-    const spoilerMat = Std({ color: 0x111111, roughness: 0.5, metalness: 0.4 });
-    g.add(this._part(new THREE.BoxGeometry(0.100,0.011,0.016), spoilerMat, 0,0.070,-0.100));
+    g.add(this._part(new THREE.BoxGeometry(0.122, 0.028, 0.236), m, 0, 0.044, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.114, 0.022, 0.180), m, 0, 0.060, -0.004));
+    // low cabin
+    g.add(this._part(new THREE.BoxGeometry(0.100, 0.026, 0.092), this.glassMat, 0, 0.078, -0.014));
+    // long sloped nose
+    g.add(this._part(new THREE.BoxGeometry(0.112, 0.010, 0.080), m, 0, 0.058, 0.094, 0.12, 0, 0));
+    // rear spoiler
+    const sp = this._trimMat();
+    g.add(this._part(new THREE.BoxGeometry(0.104, 0.006, 0.018), sp, 0, 0.072, -0.106));
+    for (const sx of [-0.040, 0.040]) g.add(this._part(new THREE.BoxGeometry(0.006, 0.014, 0.010), sp, sx, 0.064, -0.104));
+    this._addMirrors(g, sp, 0.034, 0.060, 0.070);
+    this._addFrontEnd(g, 0.116, 0.062, 0.046);
+  }
+
+  _buildVan(g, m) {
+    g.add(this._part(new THREE.BoxGeometry(0.128, 0.092, 0.250), m, 0, 0.086, -0.004));
+    // raked windshield
+    g.add(this._part(new THREE.BoxGeometry(0.118, 0.052, 0.010), this.glassMat, 0, 0.096, 0.120, -0.20, 0, 0));
+    // cab side windows
+    for (const sx of [-0.065, 0.065]) g.add(this._part(new THREE.BoxGeometry(0.004, 0.030, 0.044), this.glassMat, sx, 0.100, 0.090));
+    this._addMirrors(g, this._trimMat(), 0.112, 0.066, 0.104);
+    this._addFrontEnd(g, 0.122, 0.066, 0.060);
+  }
+
+  _buildBus(g, m, index) {
+    // Long city bus body
+    const busMat = Std({ color: index % 2 ? 0x2b6cb0 : 0xc23b22, roughness: 0.35, metalness: 0.3 });
+    g._bodyMat = busMat;
+    g.add(this._part(new THREE.BoxGeometry(0.140, 0.110, 0.340), busMat, 0, 0.100, 0));
+    // window band (both sides via one wide thin glass strip per side)
+    for (const sx of [-0.071, 0.071]) g.add(this._part(new THREE.BoxGeometry(0.004, 0.040, 0.300), this.glassMat, sx, 0.118, 0));
+    // windshield + rear glass
+    g.add(this._part(new THREE.BoxGeometry(0.130, 0.044, 0.006), this.glassMat, 0, 0.116, 0.171));
+    g.add(this._part(new THREE.BoxGeometry(0.130, 0.040, 0.006), this.glassMat, 0, 0.114, -0.171));
+    // roof AC pod
+    g.add(this._part(new THREE.BoxGeometry(0.090, 0.018, 0.120), this._trimMat(), 0, 0.164, 0.02));
+    // lights
+    const hlMat = Std({ color: 0xfffbe8, roughness: 0.04, emissive: new THREE.Color(0.4, 0.4, 0.28) });
+    const tlMat = Std({ color: 0xd81818, roughness: 0.08, emissive: new THREE.Color(0.35, 0, 0) });
+    for (const sx of [-0.052, 0.052]) {
+      g.add(this._part(new THREE.BoxGeometry(0.020, 0.012, 0.006), hlMat, sx, 0.066, 0.171));
+      g.add(this._part(new THREE.BoxGeometry(0.020, 0.014, 0.006), tlMat, sx, 0.066, -0.171));
+    }
+    this._addFrontEnd(g, 0.170, 0.070, 0.066);
+  }
+
+  _buildTaxi(g, m) {
+    // taxi = bright yellow sedan with a roof sign
+    const taxiMat = Std({ color: 0xf4c20d, roughness: 0.32, metalness: 0.35 });
+    g._bodyMat = taxiMat;
+    g.add(this._part(new THREE.BoxGeometry(0.120, 0.034, 0.234), taxiMat, 0, 0.050, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.128, 0.026, 0.214), taxiMat, 0, 0.066, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.112, 0.040, 0.108), taxiMat, 0, 0.090, -0.006));
+    g.add(this._part(new THREE.BoxGeometry(0.114, 0.034, 0.100), this.glassMat, 0, 0.094, -0.006));
+    g.add(this._part(new THREE.BoxGeometry(0.118, 0.012, 0.060), taxiMat, 0, 0.078, 0.092, 0.16, 0, 0));
+    g.add(this._part(new THREE.BoxGeometry(0.118, 0.012, 0.050), taxiMat, 0, 0.078, -0.094, -0.14, 0, 0));
+    // roof TAXI sign
+    const signMat = Std({ color: 0x111111, roughness: 0.5, metalness: 0.2, emissive: new THREE.Color(0.18, 0.12, 0) });
+    g.add(this._part(new THREE.BoxGeometry(0.034, 0.014, 0.020), signMat, 0, 0.120, -0.006));
+    // checker stripe
+    g.add(this._part(new THREE.BoxGeometry(0.130, 0.008, 0.020), this._trimMat(), 0, 0.058, 0));
+    this._addMirrors(g, this._trimMat(), 0.040, 0.064, 0.084);
+    this._addFrontEnd(g, 0.114, 0.064, 0.052);
   }
 
   // ─────── Citizen builder ───────
@@ -1529,9 +1673,12 @@ class ModelBuilder {
     const rng = this._tileRng(x, y);
     // Heights in world units (1 unit = 1 tile). Level-3 commercial reaches
     // skyscraper proportions so the downtown core dominates the skyline.
-    const base = { [TILE.ZONE_RES]:[0,0.42,1.40,3.40],[TILE.ZONE_COM]:[0,0.55,2.00,6.00],[TILE.ZONE_IND]:[0,0.60,1.00,1.60] };
-    const vary = { [TILE.ZONE_RES]:[0,0.12,0.50,1.60],[TILE.ZONE_COM]:[0,0.15,0.80,3.00],[TILE.ZONE_IND]:[0,0.15,0.30,0.50] };
-    return base[zone][level] + vary[zone][level] * rng;
+    // Level 4 is the megatower tier — reaches true supertall proportions in the
+    // commercial core and dense residential superblocks.
+    const base = { [TILE.ZONE_RES]:[0,0.42,1.40,3.40,5.60],[TILE.ZONE_COM]:[0,0.55,2.00,6.00,9.50],[TILE.ZONE_IND]:[0,0.60,1.00,1.60,2.30] };
+    const vary = { [TILE.ZONE_RES]:[0,0.12,0.50,1.60,2.20],[TILE.ZONE_COM]:[0,0.15,0.80,3.00,4.50],[TILE.ZONE_IND]:[0,0.15,0.30,0.50,0.70] };
+    const lv = Math.min(level, 4);
+    return base[zone][lv] + vary[zone][lv] * rng;
   }
 
   _tileRng(x, y) {

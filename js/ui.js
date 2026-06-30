@@ -20,6 +20,11 @@ class UI {
       taxSlider: document.getElementById('tax-slider'),
       taxReadout: document.getElementById('tax-readout'),
       weatherValue: document.getElementById('weather-value'),
+      // Observer mode
+      observerBanner: document.getElementById('observer-banner'),
+      obsGov: document.getElementById('obs-gov'),
+      obsAction: document.getElementById('obs-action'),
+      btnMode: document.getElementById('btn-mode'),
       // ARIA AI advisor
       aiBtnGrade: document.getElementById('ai-grade'),
       aiPanel: document.getElementById('ai-panel'),
@@ -50,7 +55,35 @@ class UI {
     document.getElementById('btn-load').addEventListener('click', () => { this.game.load(); this.toggleMenu(false); });
     document.getElementById('btn-new').addEventListener('click', () => { this.game.newCity(); this.toggleMenu(false); });
     document.getElementById('btn-help').addEventListener('click', () => { this.el.help.classList.remove('hidden'); this.toggleMenu(false); });
-    document.getElementById('start-btn').addEventListener('click', () => this.el.help.classList.add('hidden'));
+
+    // ── Main-menu mode selection ──
+    document.getElementById('start-btn').addEventListener('click', () => {
+      this.el.help.classList.add('hidden');
+      this.game.setMode('mayor');
+    });
+    document.getElementById('observe-btn').addEventListener('click', () => {
+      this.el.help.classList.add('hidden');
+      this.game.setMode('observer');
+      this.toast('👁️ Observer Mode — the government now runs the city');
+    });
+
+    // ── Observer banner: hand control back to the player ──
+    document.getElementById('obs-exit').addEventListener('click', () => {
+      this.game.setMode('mayor');
+      this.toast('You have taken control as Mayor');
+    });
+
+    // ── Menu: switch mode + expand map ──
+    this.el.btnMode.addEventListener('click', () => {
+      const next = this.game.mode === 'observer' ? 'mayor' : 'observer';
+      this.game.setMode(next);
+      this.toast(next === 'observer' ? '👁️ Observer Mode on' : '🏛️ You are Mayor again');
+      this.toggleMenu(false);
+    });
+    document.getElementById('btn-expand').addEventListener('click', () => {
+      this.game.expandMap(16);
+      this.toggleMenu(false);
+    });
     // Tax policy
     this.el.taxSlider.addEventListener('input', () => {
       const pct = parseInt(this.el.taxSlider.value, 10);
@@ -238,6 +271,11 @@ class UI {
       const pct = Math.round((this.game.sim.taxRate || 1) * 100);
       this.el.taxSlider.value = pct;
       this.el.taxReadout.textContent = pct + '%';
+      if (this.el.btnMode) {
+        this.el.btnMode.textContent = this.game.mode === 'observer'
+          ? '🏛️ Take control (Mayor Mode)'
+          : '👁️ Switch to Observer Mode';
+      }
       this._refreshMenuStats();
     }
   }
@@ -283,6 +321,21 @@ class UI {
       const wi = this.game.weather.info();
       this.el.weatherValue.textContent = `${wi.weather.icon} ${wi.temperature}°`;
     }
+  }
+
+  // Refresh the observer banner with who's governing and the latest action.
+  updateObserver() {
+    if (!this.el.observerBanner) return;
+    if (this.game.mode !== 'observer') { this.el.observerBanner.classList.add('hidden'); return; }
+    this.el.observerBanner.classList.remove('hidden');
+    const gov = this.game.gov;
+    const party = (gov && gov.rulingParty && typeof PARTY_BY_ID !== 'undefined') ? PARTY_BY_ID[gov.rulingParty] : null;
+    if (party && this.el.obsGov) {
+      this.el.obsGov.textContent = `${party.name} governing`;
+      this.el.obsGov.style.color = party.color || 'var(--text)';
+    }
+    const log = this.game.automayor && this.game.automayor.actionsLog[0];
+    if (this.el.obsAction) this.el.obsAction.textContent = log ? log.msg : 'Planning the next move…';
   }
 
   toast(msg) {

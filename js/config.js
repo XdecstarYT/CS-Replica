@@ -51,11 +51,16 @@ const SERVICES = [
 const SERVICE_BY_ID = Object.fromEntries(SERVICES.map(s => [s.id, s]));
 
 // Per-level capacities for grown buildings.
+// Level 4 = megatower / megablock tier (dense downtown cores). Capacities were
+// substantially raised in the population overhaul so a mature metropolis can
+// reach hundreds of thousands of residents and jobs.
 const BUILDING_LEVELS = {
-  [TILE.ZONE_RES]: [{ cap: 0 }, { cap: 12 }, { cap: 28 }, { cap: 55 }],
-  [TILE.ZONE_COM]: [{ cap: 0 }, { cap: 8 },  { cap: 20 }, { cap: 42 }],
-  [TILE.ZONE_IND]: [{ cap: 0 }, { cap: 10 }, { cap: 24 }, { cap: 48 }],
+  [TILE.ZONE_RES]: [{ cap: 0 }, { cap: 20 }, { cap: 52 }, { cap: 120 }, { cap: 240 }],
+  [TILE.ZONE_COM]: [{ cap: 0 }, { cap: 14 }, { cap: 40 }, { cap: 95 },  { cap: 195 }],
+  [TILE.ZONE_IND]: [{ cap: 0 }, { cap: 16 }, { cap: 46 }, { cap: 92 },  { cap: 180 }],
 };
+
+const MAX_LEVEL = 4;   // highest building level a zone can grow to
 
 const TAX_PER_CAPITA = 1.4;          // weekly revenue per employed/housed citizen
 const UPKEEP_PER_ROAD = 0.05;        // weekly road maintenance per tile

@@ -93,12 +93,17 @@ class Simulation {
                 : t === TILE.ZONE_COM ? this.demand.com
                 : this.demand.ind;
 
+      // Tiles climb toward a target level set by local quality and demand.
+      // Reaching the megatower tier (level 4) needs both strong amenities AND
+      // strong demand — only thriving districts densify that far.
+      const maxLv = (typeof MAX_LEVEL !== 'undefined') ? MAX_LEVEL : 3;
       const wantLevel = hasRoad && (hasPower || hasWater)
-        ? Math.min(3, Math.floor(quality * 3 + dem * 1.4))
+        ? Math.min(maxLv, Math.floor(quality * 3.2 + dem * 2.0))
         : 0;
 
-      // Ease the building level toward its target.
-      if (g.level[i] < wantLevel && Math.random() < 0.5 + dem * 0.4) g.level[i]++;
+      // Ease the building level toward its target (higher tiers rise slower).
+      const riseChance = (0.5 + dem * 0.4) / (1 + g.level[i] * 0.35);
+      if (g.level[i] < wantLevel && Math.random() < riseChance) g.level[i]++;
       else if (g.level[i] > wantLevel && Math.random() < 0.25) g.level[i]--;
 
       // Capacity comes from the *constructed* level — population only moves in

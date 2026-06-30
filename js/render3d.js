@@ -1159,8 +1159,22 @@ class Renderer3D {
 
   // ─────────────────────── Grid swap ───────────────────────
 
+  // Rebuild every world-sized object (ground, overlay) and recentre the sky /
+  // glow after the grid's dimensions change (map expansion).
+  _resizeWorld() {
+    if (this.groundMesh) { this.scene.remove(this.groundMesh); this.groundMesh.geometry.dispose(); this.groundMesh = null; }
+    this._buildGround();
+    if (this.overlayMesh) { this.scene.remove(this.overlayMesh); this.overlayMesh.geometry.dispose(); this.overlayMesh = null; }
+    this._buildOverlay();
+    this.overlayMesh.visible = !!this.overlayMode;
+    const cx = this.grid.w * this.T / 2, cz = this.grid.h * this.T / 2;
+    if (this.skyDome) this.skyDome.position.set(cx, 0, cz);
+    if (this.cityGlowLight) this.cityGlowLight.position.set(cx, 8, cz);
+  }
+
   setGrid(grid) {
     this.grid = grid;
+    this._resizeWorld();
     for (const [, v] of this.tileMeshes) {
       const list = Array.isArray(v) ? v : [v];
       list.forEach(m => this.scene.remove(m));

@@ -89,10 +89,12 @@
           <input type="range" id="tax-slider" min="50" max="150" step="5" value="100" />
           <small>Higher taxes earn more per week but slow growth.</small>
         </div>
+        <button class="menu-btn" id="btn-mode">👁️ Switch to Observer Mode</button>
+        <button class="menu-btn" id="btn-expand">🗺️ Expand Map (+16 · $8,000)</button>
         <button class="menu-btn" id="btn-save">Save City</button>
         <button class="menu-btn" id="btn-load">Load City</button>
         <button class="menu-btn" id="btn-new">New City</button>
-        <button class="menu-btn" id="btn-help">How to Play</button>
+        <button class="menu-btn" id="btn-help">Main Menu</button>
         <div class="menu-info" id="menu-stats"></div>
       </div>
     </div>
@@ -158,20 +160,47 @@
       <div class="gov-body" id="stats-body"></div>
     </div>
 
-    <!-- Help / intro overlay -->
+    <!-- Observer-mode banner -->
+    <div id="observer-banner" class="hidden">
+      <span class="obs-dot"></span>
+      <div class="obs-text">
+        <b id="obs-gov">Observer Mode</b>
+        <span id="obs-action">The elected government is building the city…</span>
+      </div>
+      <button id="obs-exit" title="Take control">Take over</button>
+    </div>
+
+    <!-- Main menu / intro overlay -->
     <div id="help-overlay" class="overlay">
-      <div class="overlay-card">
+      <div class="overlay-card main-menu">
         <h1>Metropolis</h1>
-        <p class="subtitle">A mobile-first 3D city builder with a live AI advisor</p>
-        <ul class="help-list">
-          <li><b>Drag</b> to pan, <b>pinch</b> to zoom.</li>
-          <li>Build <b>Roads</b> first — buildings only grow next to roads.</li>
-          <li>Paint <b>Residential / Commercial / Industrial</b> zones along roads.</li>
-          <li>Citizens move in based on <b>demand</b> (R/C/I bars on the left).</li>
-          <li>Place <b>Services</b> (power, water, police, parks) to keep them happy.</li>
-          <li>Tap <b>🧠 ARIA</b> for live analysis, forecasts and build advice.</li>
-        </ul>
-        <button class="big-btn" id="start-btn">Start Building</button>
+        <p class="subtitle">A mobile-first 3D city builder with elections, economy &amp; a live AI advisor</p>
+
+        <div class="mode-cards">
+          <button class="mode-card" id="start-btn">
+            <span class="mode-ico">🏛️</span>
+            <span class="mode-title">Mayor Mode</span>
+            <span class="mode-desc">You run the city — build roads, zones &amp; services yourself.</span>
+          </button>
+          <button class="mode-card" id="observe-btn">
+            <span class="mode-ico">👁️</span>
+            <span class="mode-title">Observer Mode</span>
+            <span class="mode-desc">Watch the elected government build the city its own way. Sit back &amp; spectate.</span>
+          </button>
+        </div>
+
+        <details class="help-details">
+          <summary>How to play</summary>
+          <ul class="help-list">
+            <li><b>Drag</b> to pan, <b>pinch</b> to zoom.</li>
+            <li>Build <b>Roads</b> first — buildings only grow next to roads.</li>
+            <li>Paint <b>Residential / Commercial / Industrial</b> zones along roads.</li>
+            <li>Citizens move in based on <b>demand</b> (R/C/I bars on the left).</li>
+            <li>Place <b>Services</b> (power, water, police, parks) to keep them happy.</li>
+            <li><b>Observer Mode</b> lets the party in power build — elections change the city's direction.</li>
+            <li>Tap <b>🧠 ARIA</b> for live analysis, and <b>🏛 Government</b> for politics.</li>
+          </ul>
+        </details>
       </div>
     </div>
 
@@ -200,6 +229,7 @@
   <script src="js/politics/government.js"></script>
   <script src="js/politics/politics_ui.js"></script>
   <script src="js/input3d.js"></script>
+  <script src="js/automayor.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/game.js"></script>
 </body>
