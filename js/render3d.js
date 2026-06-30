@@ -473,9 +473,19 @@ class Renderer3D {
     const g = this.grid, T = this.T;
     const i = g.idx(x, y);
     const t = g.type[i];
-    if (t === TILE.GRASS || t === TILE.WATER) return;
-
     const cx = x * T + T / 2, cz = y * T + T / 2;
+
+    // Road under construction (tile is still grass until paving finishes).
+    const rproj = this.construction && this.construction.roadAt(i);
+    if (rproj) {
+      const site = this.models.buildRoadSite(T, rproj.stage, this.models._hash(x, y));
+      site.position.set(cx, 0, cz);
+      this.scene.add(site);
+      this.tileMeshes.set(key, site);
+      return;
+    }
+
+    if (t === TILE.GRASS || t === TILE.WATER) return;
 
     if (t === TILE.ROAD) {
       const meshes = this._buildRoad(x, y, cx, cz, T);
@@ -738,14 +748,16 @@ class Renderer3D {
     this.tileMeshes.clear();
     this.levelCache.fill(255);
 
-    const g = this.grid;
+    const g = this.grid, c = this.construction;
     for (let y = 0; y < g.h; y++) {
       for (let x = 0; x < g.w; x++) {
-        const t = g.type[g.idx(x, y)];
-        if (t !== TILE.GRASS && t !== TILE.WATER) this.updateTile(x, y);
+        const i = g.idx(x, y), t = g.type[i];
+        // Draw finished tiles, plus any road still under construction (grass tile).
+        if ((t !== TILE.GRASS && t !== TILE.WATER) || (c && c.isRoadActive(i))) this.updateTile(x, y);
       }
     }
     this._snapshotSigs();   // signatures now match what was just drawn
+    if (this._roadSig) this._roadSig.fill(-1);
     this._winDirty = true;
   }
 
@@ -784,6 +796,32 @@ class Renderer3D {
         this._bldSig[i] = sig;
         this.updateTile(i % g.w, (i / g.w) | 0);
       }
+    }
+  }
+
+  // Re-render road-works tiles whose paving stage advanced, and when a road
+  // finishes, re-render it plus its road neighbours so lane markings connect.
+  syncRoads() {
+    const g = this.grid, c = this.construction;
+    if (!c) return;
+    if (!this._roadSig || this._roadSig.length !== g.type.length) this._roadSig = new Int32Array(g.type.length).fill(-1);
+    // Active road-works: redraw on stage-bucket change.
+    for (const [i, p] of c.roads) {
+      const sig = 2000 + (c.stageIndex ? c.stageIndex(p.stage) : (p.stage * 4 | 0));
+      if (this._roadSig[i] !== sig) { this._roadSig[i] = sig; this.updateTile(i % g.w, (i / g.w) | 0); }
+    }
+    // Tiles that finished paving this tick → become real roads + refresh neighbours.
+    if (c._roadDone && c._roadDone.length) {
+      for (const i of c._roadDone) {
+        this._roadSig[i] = -1;
+        const x = i % g.w, y = (i / g.w) | 0;
+        this.updateTile(x, y);
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, nz = y + dz;
+          if (g.inBounds(nx, nz) && g.type[g.idx(nx, nz)] === TILE.ROAD) this.updateTile(nx, nz);
+        }
+      }
+      c._roadDone.length = 0;
     }
   }
 

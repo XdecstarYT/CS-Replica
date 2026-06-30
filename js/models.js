@@ -1349,6 +1349,45 @@ class ModelBuilder {
 
   // A live construction site: a structural frame that rises with progress,
   // wrapped in scaffolding, served by an animated tower crane. `stage` is 0..1.
+  // A road tile under construction: graded earth → gravel sub-base → asphalt
+  // paving sweeps across the tile, ringed by traffic cones and a barrier that
+  // clear away as it nears completion.
+  buildRoadSite(T, stage, hash) {
+    const group = new THREE.Group();
+    if (!this._roadMats) {
+      this._roadMats = {
+        bed:     Std({ color: 0x6b5a42, roughness: 1.0, metalness: 0 }),
+        gravel:  Std({ color: 0x8a8378, roughness: 1.0, metalness: 0 }),
+        asphalt: Std({ color: 0x2a2e35, roughness: 0.82, metalness: 0.06 }),
+        cone:    Std({ color: 0xff6a1a, roughness: 0.6, metalness: 0, emissive: new THREE.Color(0x180600) }),
+        band:    Std({ color: 0xf2f2f2, roughness: 0.6, metalness: 0 }),
+        barrier: Std({ color: 0xf2b01a, roughness: 0.7, metalness: 0 }),
+      };
+    }
+    const M = this._roadMats;
+    const km = (mat, sx, sy, sz, x, y, z) => group.add(this._kmesh(this.kit.box, mat, sx, sy, sz, x, y, z, false));
+    // graded earth pad
+    km(M.bed, T * 0.96, 0.04, T * 0.96, 0, 0.02, 0);
+    if (stage > 0.30) km(M.gravel, T * 0.9, 0.045, T * 0.9, 0, 0.030, 0);
+    if (stage > 0.55) {
+      const f = Math.min(1, (stage - 0.55) / 0.40);   // paved fraction
+      const w = T * 0.92 * f;
+      km(M.asphalt, w, 0.05, T * 0.92, -T * 0.46 + w / 2, 0.035, 0);
+    }
+    // traffic cones (fewer near completion)
+    const corners = [[-0.34, -0.34], [0.34, -0.34], [-0.34, 0.34], [0.34, 0.34]];
+    const nCones = stage < 0.85 ? 4 : 2;
+    for (let c = 0; c < nCones; c++) {
+      const [ox, oz] = corners[c];
+      group.add(this._kmesh(this.kit.cone, M.cone, 0.16, 0.16, 0.16, ox * T, 0.08, oz * T, false));
+      group.add(this._kmesh(this.kit.cone, M.band, 0.11, 0.05, 0.11, ox * T, 0.10, oz * T, false));
+    }
+    // barrier rail on one edge during early grading
+    if (stage < 0.6) km(M.barrier, T * 0.72, 0.05, 0.03, 0, 0.10, -T * 0.42);
+    group._roadSite = true;
+    return group;
+  }
+
   buildConstructionSite(zone, T, target, stage, hash) {
     const group = new THREE.Group();
     const R = this._rng(hash ^ 0x51ed2701);

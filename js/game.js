@@ -83,15 +83,13 @@ class Game {
     if (this.tool === 'road') {
       if (g.type[i] === TILE.WATER) return this._deny('Can\'t build on water');
       if (g.type[i] === TILE.ROAD) return;
+      if (this.construction.isRoadActive(i)) return;        // already being built
       if (!this._charge(50)) return;
-      this._clearTile(i);
-      g.type[i] = TILE.ROAD;
-      this.renderer.updateTile(tx, ty);
-      // Refresh neighbours so lane markings update
-      for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-        const nx = tx+dx, nz = ty+dz;
-        if (g.inBounds(nx, nz) && g.type[g.idx(nx, nz)] === TILE.ROAD) this.renderer.updateTile(nx, nz);
-      }
+      this._clearTile(i);                                   // clear any zone/building first
+      // Roads are no longer instant: open a road-works project. The tile becomes
+      // a functional road only once paving completes (Construction.tick).
+      this.construction.startRoad(i, tx, ty);
+      this.renderer.updateTile(tx, ty);                     // show the worksite now
     }
     else if (this.tool.startsWith('zone')) {
       const z = ZONE_OF[this.tool];
@@ -117,6 +115,13 @@ class Game {
       this.ui.toast(`${svc.name} built`);
     }
     else if (this.tool === 'bulldoze') {
+      // Cancel a road still under construction (the tile is still grass).
+      if (this.construction.isRoadActive(i)) {
+        this.construction.cancelRoad(i);
+        if (this.renderer._roadSig) this.renderer._roadSig[i] = -1;
+        this.renderer.updateTile(tx, ty);
+        return;
+      }
       if (g.type[i] === TILE.WATER || g.type[i] === TILE.GRASS) return;
       const wasRoad = g.type[i] === TILE.ROAD;
       this._clearTile(i);
@@ -136,7 +141,7 @@ class Game {
     if (this.grid.built) this.grid.built[i] = 0;
     this.grid.pop[i] = 0;
     this.grid.service[i] = null;
-    if (this.construction) this.construction.projects.delete(i);
+    if (this.construction) { this.construction.projects.delete(i); this.construction.cancelRoad(i); }
     if (this.grid.type[i] !== TILE.WATER) this.grid.type[i] = TILE.GRASS;
   }
 
@@ -174,8 +179,9 @@ class Game {
         const cong = this.traffic.avgCongestion || 0;
         this.sim.trafficMods = { happyAdd: -cong * 0.12, growthMult: 1 - cong * 0.08 };
         const res = this.sim.step();
-        this.construction.tick();      // advance staged build projects
+        this.construction.tick();      // advance staged build + road-works projects
         this.renderer.syncBuildings(); // update grown buildings / live sites in 3D
+        this.renderer.syncRoads();     // advance road-works visuals + finish paving
 
         // ── ARIA: observe, analyse periodically, nudge, refresh overlays ──
         this.ai.observe();

@@ -70,14 +70,12 @@ class AutoMayor {
   _placeRoad(x, y) {
     const g = this.game.grid, i = g.idx(x, y);
     if (g.type[i] !== TILE.GRASS) return false;
+    if (this.game.construction.isRoadActive(i)) return false;
     if (this.game.sim.money < 50) return false;
     this.game.sim.money -= 50;
-    g.type[i] = TILE.ROAD;
+    // Government roads are built progressively too (Construction paves them).
+    this.game.construction.startRoad(i, x, y);
     this.game.renderer.updateTile(x, y);
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx, nz = y + dz;
-      if (g.inBounds(nx, nz) && g.type[g.idx(nx, nz)] === TILE.ROAD) this.game.renderer.updateTile(nx, nz);
-    }
     return true;
   }
 

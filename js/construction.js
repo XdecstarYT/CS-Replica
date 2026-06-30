@@ -22,13 +22,27 @@ class Construction {
     this.game = game;
     this.grid = game.grid;
     this.projects = new Map();   // tileIndex -> { target, from, stage }
+    this.roads = new Map();      // tileIndex -> { x, y, stage }  (roads under construction)
+    this._roadDone = [];         // tiles whose paving finished this tick (renderer reads)
   }
 
-  setGrid(grid) { this.grid = grid; this.projects.clear(); }
+  setGrid(grid) { this.grid = grid; this.projects.clear(); this.roads.clear(); this._roadDone.length = 0; }
 
   projectAt(i) { return this.projects.get(i); }
   isActive(i) { const p = this.projects.get(i); return !!(p && p.stage < 1); }
   get activeCount() { return this.projects.size; }
+
+  // ── Road works ──
+  roadAt(i) { return this.roads.get(i); }
+  isRoadActive(i) { return this.roads.has(i); }
+  // Open a road-construction project on a (currently empty) tile. The tile only
+  // becomes a functional TILE.ROAD once paving completes in tick().
+  startRoad(i, x, y) {
+    if (this.roads.has(i)) return false;
+    this.roads.set(i, { x, y, stage: 0 });
+    return true;
+  }
+  cancelRoad(i) { this.roads.delete(i); }
 
   // Map a 0..1 progress value to a discrete stage index (for re-render gating).
   stageIndex(stage) {
@@ -94,17 +108,37 @@ class Construction {
       p.stage = Math.min(1, p.stage + this._tileSpeed(i, p));
       if (p.stage >= 1) { g.built[i] = p.target; this.projects.delete(i); }
     }
+
+    // 3) Advance road works; when paving finishes the tile becomes a real road.
+    this._roadDone.length = 0;
+    const rspeed = this.speedFactor();
+    for (const [i, p] of this.roads) {
+      // A graded + paved tile is quicker than a tower: ~2 weeks at full speed.
+      const jitter = 0.85 + (((i * 40503) >>> 0) % 1000) / 1000 * 0.3;
+      p.stage = Math.min(1, p.stage + 0.5 * jitter * rspeed);
+      if (p.stage >= 1) {
+        if (g.type[i] === TILE.GRASS) g.type[i] = TILE.ROAD;   // never overwrite water/built
+        this.roads.delete(i);
+        this._roadDone.push(i);
+      }
+    }
   }
 
   serialize() {
     const out = [];
     for (const [i, p] of this.projects) out.push([i, p.target, p.from, +p.stage.toFixed(3)]);
-    return out;
+    const roads = [];
+    for (const [i, p] of this.roads) roads.push([i, p.x, p.y, +p.stage.toFixed(3)]);
+    return { b: out, r: roads };
   }
 
   load(data) {
-    this.projects.clear();
-    if (!Array.isArray(data)) return;
-    for (const [i, target, from, stage] of data) this.projects.set(i, { target, from, stage });
+    this.projects.clear(); this.roads.clear();
+    if (!data) return;
+    // Backward compat: old saves stored just the building array.
+    const b = Array.isArray(data) ? data : (data.b || []);
+    for (const [i, target, from, stage] of b) this.projects.set(i, { target, from, stage });
+    const r = Array.isArray(data) ? [] : (data.r || []);
+    for (const [i, x, y, stage] of r) this.roads.set(i, { x, y, stage });
   }
 }
