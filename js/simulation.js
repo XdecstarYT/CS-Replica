@@ -19,11 +19,14 @@ class Simulation {
     const g = this.grid;
     g.power.fill(0);
     g.water.fill(0);
-    const fields = { safety: new Float32Array(g.w * g.h),
-                     health: new Float32Array(g.w * g.h),
-                     education: new Float32Array(g.w * g.h),
-                     happy: new Float32Array(g.w * g.h) };
+    const n = g.w * g.h;
+    const fields = { safety: new Float32Array(n),
+                     health: new Float32Array(n),
+                     education: new Float32Array(n),
+                     happy: new Float32Array(n),
+                     pollution: new Float32Array(n) };
     this.fields = fields;
+    if (!g.land || g.land.length !== n) g.land = new Float32Array(n);
 
     let powerCap = 0, waterCap = 0;
 
@@ -42,7 +45,24 @@ class Simulation {
         if (svc.education) fields.education[idx] += falloff;
         if (svc.happy) fields.happy[idx] += falloff;
       });
+      // Dirty utilities (coal power) pollute their surroundings.
+      if (svc.pollution) this._stamp(sx, sy, svc.range, (idx, fo) => { fields.pollution[idx] += fo * (svc.pollution / 40); });
     }
+
+    // Industry and traffic jams generate pollution that drifts over nearby tiles.
+    const built = g.built || g.level;
+    for (let i = 0; i < g.type.length; i++) {
+      if (g.type[i] === TILE.ZONE_IND && built[i] > 0) {
+        const sx = i % g.w, sy = (i / g.w) | 0;
+        const intensity = 0.10 + built[i] * 0.06;
+        this._stamp(sx, sy, 3, (idx, fo) => { fields.pollution[idx] += fo * intensity; });
+      }
+    }
+    if (g.congestion) {
+      for (let i = 0; i < g.type.length; i++) if (g.type[i] === TILE.ROAD) fields.pollution[i] += g.congestion[i] * 0.30;
+    }
+    for (let i = 0; i < n; i++) if (fields.pollution[i] > 1) fields.pollution[i] = 1;
+
     this.powerCap = powerCap;
     this.waterCap = waterCap;
   }
@@ -68,6 +88,7 @@ class Simulation {
     let resCap = 0, comCap = 0, indCap = 0;
     let powered = 0, total = 0;
     let happinessSum = 0, happinessN = 0;
+    let propBase = 0, pollSum = 0, pollN = 0;   // property-tax base + pollution avg
 
     for (let i = 0; i < g.type.length; i++) {
       const t = g.type[i];
@@ -87,6 +108,14 @@ class Simulation {
       const utilities = (hasPower ? 0.5 : 0) + (hasWater ? 0.5 : 0);
       let quality = utilities * 0.6 + services * 0.4;
       if (!hasRoad) quality = 0;
+
+      // Pollution depresses desirability — homes hate it, offices dislike it,
+      // industry barely notices. Land value blends amenities, utilities & clean air.
+      const poll = f.pollution[i];
+      const pollHit = t === TILE.ZONE_RES ? 0.55 : t === TILE.ZONE_COM ? 0.30 : 0.10;
+      quality = Math.max(0, quality * (1 - poll * pollHit));
+      g.land[i] = clamp01(0.20 + services * 0.5 + utilities * 0.2 - poll * 0.5);
+      pollSum += poll; pollN++;
 
       // Demand-driven growth target for this tile.
       const dem = t === TILE.ZONE_RES ? this.demand.res
@@ -124,8 +153,11 @@ class Simulation {
       else if (t === TILE.ZONE_COM) { com += g.pop[i]; comCap += cap; }
       else { ind += g.pop[i]; indCap += cap; }
 
+      propBase += g.pop[i] * g.land[i];
       if (g.pop[i] > 0) { happinessSum += quality; happinessN++; }
     }
+    this.avgPollution = pollN ? pollSum / pollN : 0;
+    this.avgLandValue = total ? (propBase / Math.max(1, res + com + ind)) : 0;
 
     this.population = res;
     this.jobsC = com;
@@ -156,8 +188,11 @@ class Simulation {
     const pm = this.policyMods || {};
     const em = this.econMods || {};
     const en = this.envMods || {};
+    // Property tax scales with land value: well-served, low-pollution districts
+    // are worth more and pay more — a real incentive to build clean, green cities.
+    const property = propBase * 0.6 * this.taxRate * (pm.taxMult ?? 1);
     const tax = citizensServed * TAX_PER_CAPITA * this.taxRate * (0.6 + this.happiness * 0.6)
-              * (pm.taxMult ?? 1) * (em.taxMult ?? 1) + (pm.revenueAdd || 0);
+              * (pm.taxMult ?? 1) * (em.taxMult ?? 1) + property + (pm.revenueAdd || 0);
     let upkeep = 0;
     let roadCount = 0;
     for (let i = 0; i < g.type.length; i++) {

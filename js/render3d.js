@@ -851,10 +851,20 @@ class Renderer3D {
           }
         }
         else if (mode === 'services'){ v = f ? Math.min(1, (f.safety[i] + f.health[i] + f.happy[i] + f.education[i]) / 2) : 0; col = [192, 132, 252]; }
+        else if (mode === 'pollution') {
+          v = (f && f.pollution) ? Math.min(1, f.pollution[i] * 1.2) : 0;
+          col = [Math.round(120 + 120 * v), Math.round(150 * (1 - v) + 40), 40];   // green→brown smog
+        }
+        else if (mode === 'landvalue') {
+          v = g.land ? g.land[i] : 0;
+          if (g.type[i] === TILE.WATER) v = 0;
+          col = [Math.round(255 * (1 - v)), Math.round(200 * v + 40), 70];          // red poor → green rich
+        }
         else if (mode === 'desirability') {
           const util = (g.power[i] ? 0.5 : 0) + (g.water[i] ? 0.5 : 0);
           const serv = f ? Math.min(1, (f.safety[i] + f.health[i] + f.happy[i] + f.education[i]) / 2) : 0;
-          v = util * 0.6 + serv * 0.4;
+          const poll = (f && f.pollution) ? f.pollution[i] : 0;
+          v = Math.max(0, util * 0.6 + serv * 0.4 - poll * 0.5);
           const t = g.type[i];
           if (t === TILE.WATER) v = 0;
           // green = good, red = poor
