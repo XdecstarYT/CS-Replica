@@ -69,6 +69,22 @@ class Government {
     this.promises = [];
     this._promiseBaseTax = 1; this._promiseBaseDebt = 0; this._promiseBasePop = 0;
 
+    // ── 15 New political features ──
+    this.termsServed = 0;           // terms held by current ruling party
+    this.termLimitReached = false;  // true if current party has hit max terms
+    this.emergencyPowersWeeks = 0;  // countdown: laws bypass parliament while > 0
+    this.treaties = {};             // nationId → { bonus:{taxMult,growthMult}, year }
+    this.cabinet = {};              // role → { partyId, appliedBonus }
+    this.watchdog = { active: false, weeksActive: 0 };
+    this.secessionRisk = 0;        // 0..100 civil independence pressure
+    this.referendum = null;         // { billId, weekDue, lawName }
+    this.referendumCooldown = 0;
+    this.investigations = [];       // { topic, weekDue, reward, done }
+    this.adCooldown = 0;
+    this.fdiCooldown = 0;
+    this.coalitionTension = 0;     // 0..100; high values risk coalition split
+    this.noConfidenceCooldown = 0;
+
     this._computeDrivers();
     this._recomputeEffects();
     this._allocateSeats(this._popularVote());
@@ -245,6 +261,17 @@ class Government {
     this._allocateSeats(popular);
     const prevRuling = this.rulingParty;
     this._formGovernment();
+    // Term tracking (features 13 & 14)
+    if (this.rulingParty === prevRuling) {
+      this.termsServed++;
+    } else {
+      this.termsServed = 1;
+      this.termLimitReached = false;
+      this._termWarnedThisElection = false;
+      // Clear cabinet when government changes
+      this.cabinet = {};
+    }
+    this.coalitionTension = 0;
     const turnout = polClamp(0.45 + this.approval / 320 + this.game.sim.happiness * 0.2, 0.30, 0.93);
     this.lastElection = {
       popular, districts, turnout, year: this.year(), week: this.game.sim.week,
@@ -361,6 +388,12 @@ class Government {
       if (fx.revenueAdd) e.revenueAdd += fx.revenueAdd * prog;
       if (fx.crime) e.crime += fx.crime * prog;
       if (fx.pollution) e.pollution += fx.pollution * prog;
+    }
+    // Treaty economic bonuses compound in.
+    for (const nationId in (this.treaties || {})) {
+      const tr = this.treaties[nationId];
+      if (tr && tr.taxMult)    e.taxMult    *= tr.taxMult;
+      if (tr && tr.growthMult) e.growthMult *= tr.growthMult;
     }
     // Debt servicing folds into weekly upkeep.
     e.upkeepAdd += (this.debt + this.loans) * this.interestRate / this.config.weeksPerYear;
@@ -747,6 +780,237 @@ class Government {
     if (Math.random() < 0.6) this.startProtest('corruption at City Hall', polClamp(0.4 + this.corruption / 120, 0.3, 1));
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  //  15 NEW POLITICAL FEATURES
+  // ═══════════════════════════════════════════════════════════════
+
+  // 1. Political advertising campaign — spend money + capital to boost approval.
+  runAdCampaign() {
+    if (this.adCooldown > 0 || this.game.sim.money < 6000 || this.politicalCapital < 2) return false;
+    this.game.sim.money -= 6000;
+    this.politicalCapital -= 2;
+    this.approval = polClamp(this.approval + 7, 0, 100);
+    this.media.bias = polClamp(this.media.bias + 18, -100, 100);
+    this.adCooldown = 12;
+    this._pushNews('City Hall launches a public approval campaign.', 'Online', this.rulingParty);
+    this._recomputeEffects();
+    return true;
+  }
+
+  // 2. Parliamentary investigation — delayed capital/approval reward.
+  launchInvestigation(topic) {
+    if (this.politicalCapital < 2) return false;
+    if (this.investigations.filter(i => !i.done).length >= 2) return false;
+    this.politicalCapital -= 2;
+    const rewards = {
+      crime:      { capital: 3, approval: 4,  what: 'reduced crime exposure' },
+      corruption: { capital: 4, approval: 2,  corruption: -15, what: 'corruption evidence gathered' },
+      pollution:  { capital: 2, approval: 3,  what: 'pollution investigation concluded' },
+      housing:    { capital: 3, approval: 5,  what: 'housing report delivered to council' },
+    };
+    const inv = { topic, reward: rewards[topic] || { capital: 2, approval: 2, what: 'investigation complete' }, weekDue: this.game.sim.week + 8, done: false };
+    this.investigations.push(inv);
+    this._pushNews(`Parliamentary committee investigates ${topic}.`, 'Newspaper', this.rulingParty);
+    return true;
+  }
+
+  // 3. Referendum — puts a pending bill to the popular vote.
+  callReferendum(billId) {
+    if (this.referendumCooldown > 0 || this.politicalCapital < 3) return false;
+    const bill = this.bills.find(b => b.id === billId && b.status === 'pending');
+    if (!bill) return false;
+    const law = LAW_BY_ID[bill.lawId];
+    this.politicalCapital -= 3;
+    this.referendum = { billId, bill, lawName: law.name, weekDue: this.game.sim.week + 2 };
+    this.referendumCooldown = 52;
+    this._pushNews(`Citizens' referendum called on "${law.name}".`, 'TV', this.rulingParty);
+    return true;
+  }
+
+  _resolveReferendum() {
+    const ref = this.referendum; if (!ref) return;
+    this.referendum = null;
+    const sim = this.game.sim;
+    // Pass if happiness + size of coalition support favours it
+    const passProb = polClamp(sim.happiness * 0.5 + this.approval / 200 + 0.35, 0.2, 0.85);
+    const passed = Math.random() < passProb;
+    const bill = this.bills.find(b => b.id === ref.billId);
+    if (bill) {
+      bill.status = passed ? 'passed' : 'rejected';
+      if (passed) { this.activeLaws.add(bill.lawId); this.lawProgress[bill.lawId] = 0; this._recomputeEffects(); }
+      this._pushNews(`Referendum ${passed ? 'PASSED' : 'FAILED'}: "${ref.lawName}" — turnout ${Math.round(55 + this.approval / 5)}%.`, passed ? 'TV' : 'Newspaper', null);
+    }
+  }
+
+  // 4. Emergency powers — bills bypass parliament for N weeks.
+  declareEmergency() {
+    if (this.emergencyPowersWeeks > 0 || this.politicalCapital < 2) return false;
+    this.politicalCapital -= 2;
+    this.emergencyPowersWeeks = 6;
+    this.approval = polClamp(this.approval - 4, 0, 100);
+    this._pushNews('Emergency executive powers declared — parliament suspended.', 'Breaking', this.rulingParty);
+    this._recomputeEffects();
+    return true;
+  }
+
+  // 5. Trade treaty — ongoing economic bonus with a foreign nation.
+  signTreaty(nationId) {
+    if (!this.relations[nationId] || this.relations[nationId] < 55) return false;
+    if (this.treaties[nationId] || this.politicalCapital < 2) return false;
+    this.politicalCapital -= 2;
+    this.treaties[nationId] = { taxMult: 1.05, growthMult: 1.03, year: this.year() };
+    this.relations[nationId] = polClamp(this.relations[nationId] + 8, 0, 100);
+    this._pushNews(`Trade treaty signed with ${this.relMeta[nationId].name}.`, 'TV', null);
+    this._recomputeEffects();
+    return true;
+  }
+
+  // 6. Foreign direct investment — one-time cash injection.
+  seekFDI(nationId) {
+    if (!this.relations[nationId] || this.relations[nationId] < 45) return false;
+    if (this.fdiCooldown > 0 || this.politicalCapital < 1) return false;
+    this.politicalCapital -= 1;
+    const amount = 8000 + Math.floor(this.relations[nationId] * 160);
+    this.game.sim.money += amount;
+    this.fdiCooldown = 52;
+    this.relations[nationId] = polClamp(this.relations[nationId] + 4, 0, 100);
+    this._pushNews(`${this.relMeta[nationId].name} invests $${amount.toLocaleString()} in city infrastructure.`, 'Online', null);
+    return amount;
+  }
+
+  // 7. Anti-corruption taskforce — reduces corruption now.
+  launchTaskforce() {
+    if (this.politicalCapital < 2 || this.corruption < 5) return false;
+    this.politicalCapital -= 2;
+    const reduction = Math.min(25, this.corruption * 0.4 + 8);
+    this.corruption = polClamp(this.corruption - reduction, 0, 100);
+    this.approval = polClamp(this.approval + 3, 0, 100);
+    this._pushNews('Anti-corruption taskforce launched; investigations under way.', 'TV', this.rulingParty);
+    this._recomputeEffects();
+    return true;
+  }
+
+  // 8. Cabinet minister appointment — boosts a department's efficiency.
+  appointMinister(role, partyId) {
+    const validRoles = { planning: true, transport: true, finance: true, emergency: true };
+    if (!validRoles[role]) return false;
+    const party = PARTY_BY_ID[partyId]; if (!party) return false;
+    if (!this.coalition.includes(partyId)) return false;
+    if (this.politicalCapital < 1) return false;
+    this.politicalCapital -= 1;
+    this.cabinet[role] = { partyId, name: `${party.short} Minister`, appliedBonus: 0.10 };
+    const dept = this.departments[role];
+    if (dept) dept.eff = Math.min(1, dept.eff + 0.12);
+    this._pushNews(`${party.name} appointed to lead ${this.departments[role].name}.`, 'Online', this.rulingParty);
+    return true;
+  }
+
+  // 9. Independent watchdog agency — passive corruption prevention.
+  enableWatchdog() {
+    if (this.watchdog.active || this.politicalCapital < 3) return false;
+    this.politicalCapital -= 3;
+    this.watchdog = { active: true, weeksActive: 0 };
+    this._pushNews('Integrity Commission established — corruption will be monitored.', 'Newspaper', null);
+    return true;
+  }
+
+  // ── Tick helpers for new features (called by tick()) ──
+
+  _tickNewFeatures() {
+    const week = this.game.sim.week;
+
+    // 10. Watchdog passive corruption drain
+    if (this.watchdog.active) {
+      this.watchdog.weeksActive++;
+      this.corruption = polClamp(this.corruption - 0.3, 0, 100);
+    }
+
+    // 11. Coalition stability — tension rises when approval is low
+    if (this.coalition.length > 1) {
+      const tenTarget = polClamp(50 - this.approval + this.game.sim.week % 3, 0, 100);
+      this.coalitionTension += (tenTarget - this.coalitionTension) * 0.05;
+      if (this.coalitionTension > 72 && Math.random() < 0.06) {
+        // Minor partner withdraws
+        const leaver = this.coalition.find(id => id !== this.rulingParty);
+        if (leaver) {
+          this.coalition = this.coalition.filter(id => id !== leaver);
+          this.approval = polClamp(this.approval - 3, 0, 100);
+          this.coalitionTension = Math.max(0, this.coalitionTension - 30);
+          this._pushNews(`${PARTY_BY_ID[leaver].name} withdraws from coalition — minority government.`, 'Breaking', leaver);
+        }
+      }
+    } else {
+      this.coalitionTension = Math.max(0, this.coalitionTension - 2);
+    }
+
+    // 12. Secession risk — builds if happiness + stability both low for long
+    const unhappy = (this.game.sim.happiness < 0.3 && this.stability < 35);
+    this.secessionRisk = polClamp(this.secessionRisk + (unhappy ? 1.2 : -0.5), 0, 100);
+    if (this.secessionRisk > 60 && Math.random() < 0.04) {
+      this._pushNews('Civic independence movement gains traction — secession risk rising.', 'Breaking', null);
+      this.stability = polClamp(this.stability - 4, 0, 100);
+      this.approval = polClamp(this.approval - 2, 0, 100);
+    }
+
+    // 13 & 14. Term limit enforcement (max 4 terms)
+    this.termLimitReached = this.termsServed >= 4;
+    if (this.termLimitReached && week >= this.nextElectionWeek && !this._termWarnedThisElection) {
+      this._pushNews('Term limit reached — the ruling coalition cannot stand for re-election.', 'TV', null);
+      this._termWarnedThisElection = true;
+    }
+
+    // 15. No-confidence motion by opposition AI
+    if (this.noConfidenceCooldown > 0) this.noConfidenceCooldown--;
+    if (this.approval < 35 && this.noConfidenceCooldown === 0 && !this.hasMajority() && Math.random() < 0.08) {
+      this._triggerNoConfidence();
+    }
+
+    // Emergency powers countdown
+    if (this.emergencyPowersWeeks > 0) {
+      this.emergencyPowersWeeks--;
+      if (this.emergencyPowersWeeks === 0) this._pushNews('Emergency powers lapse; parliament resumes full control.', 'TV', null);
+    }
+
+    // Ad campaign cooldown
+    if (this.adCooldown > 0) this.adCooldown--;
+    if (this.fdiCooldown > 0) this.fdiCooldown--;
+    if (this.referendumCooldown > 0) this.referendumCooldown--;
+
+    // Treaty ongoing bonuses applied in _recomputeEffects via this.treaties
+    // Investigations complete
+    for (const inv of this.investigations) {
+      if (!inv.done && week >= inv.weekDue) {
+        inv.done = true;
+        const r = inv.reward;
+        if (r.capital) this.politicalCapital = Math.min(14, this.politicalCapital + r.capital);
+        if (r.approval) this.approval = polClamp(this.approval + r.approval, 0, 100);
+        if (r.corruption) this.corruption = polClamp(this.corruption + r.corruption, 0, 100);
+        this._pushNews(`Investigation complete: ${r.what}.`, 'Newspaper', null);
+      }
+    }
+    this.investigations = this.investigations.filter(i => !i.done || (week - i.weekDue) < 8);
+
+    // Referendum resolution
+    if (this.referendum && week >= this.referendum.weekDue) this._resolveReferendum();
+  }
+
+  // 15. No-confidence motion — opposition calls vote if they have enough seats.
+  _triggerNoConfidence() {
+    const opp = this.config.seats - this.coalitionSeats();
+    if (opp < Math.floor(this.config.seats / 3)) return;
+    this._pushNews('Opposition tables a no-confidence motion!', 'Breaking', null);
+    this.noConfidenceCooldown = 24;
+    // If opposition has majority, it passes → snap election
+    if (opp > this.config.seats / 2) {
+      this.approval = polClamp(this.approval - 6, 0, 100);
+      this._pushNews('No-confidence vote passes — snap election triggered.', 'TV', null);
+      setTimeout(() => this.runElection(), 0);
+    } else {
+      this.approval = polClamp(this.approval - 2, 0, 100);
+      this._pushNews('No-confidence vote defeated — government survives.', 'Online', this.rulingParty);
+    }
+  }
+
   // ───────────────────────── News feed ─────────────────────────
   _pushNews(text, source, partyId) {
     this.news.unshift({ text, source: source || 'Online', party: partyId || null, week: this.game.sim.week, year: this.year() });
@@ -763,6 +1027,7 @@ class Government {
     this._tickDepartments();                                  // bureaucratic efficiency drift
     this._tickPolitics();                                     // propagation, lobbying, corruption
     this._checkPromises();                                    // binding mayoral pledges
+    this._tickNewFeatures();                                  // 15 new political systems
     if (this.protest && this.protest.weeksLeft > 0) {         // wind down an active protest
       this.protest.weeksLeft--;
       if (this.protest.weeksLeft <= 0) { this._pushNews('Protests subside; the streets clear.', 'Newspaper', null); this.protest = null; }
@@ -793,6 +1058,13 @@ class Government {
       protest: this.protest, lobby: this.lobby, dealCooldown: this.dealCooldown,
       departments: this.departments, promises: this.promises,
       promiseBase: { tax: this._promiseBaseTax, debt: this._promiseBaseDebt, pop: this._promiseBasePop },
+      // New features
+      termsServed: this.termsServed, emergencyPowersWeeks: this.emergencyPowersWeeks,
+      treaties: this.treaties, cabinet: this.cabinet, watchdog: this.watchdog,
+      secessionRisk: this.secessionRisk, referendumCooldown: this.referendumCooldown,
+      adCooldown: this.adCooldown, fdiCooldown: this.fdiCooldown,
+      coalitionTension: this.coalitionTension, noConfidenceCooldown: this.noConfidenceCooldown,
+      investigations: this.investigations.filter(i => !i.done),
     };
   }
 
@@ -823,6 +1095,19 @@ class Government {
     if (data.departments) for (const id in data.departments) if (this.departments[id]) this.departments[id].eff = data.departments[id].eff ?? this.departments[id].eff;
     if (data.promises) this.promises = data.promises;
     if (data.promiseBase) { this._promiseBaseTax = data.promiseBase.tax; this._promiseBaseDebt = data.promiseBase.debt; this._promiseBasePop = data.promiseBase.pop; }
+    // New features (backward compat: all default to neutral values if not present)
+    this.termsServed = data.termsServed ?? 0;
+    this.emergencyPowersWeeks = data.emergencyPowersWeeks ?? 0;
+    this.treaties = data.treaties || {};
+    this.cabinet = data.cabinet || {};
+    this.watchdog = data.watchdog || { active: false, weeksActive: 0 };
+    this.secessionRisk = data.secessionRisk ?? 0;
+    this.referendumCooldown = data.referendumCooldown ?? 0;
+    this.adCooldown = data.adCooldown ?? 0;
+    this.fdiCooldown = data.fdiCooldown ?? 0;
+    this.coalitionTension = data.coalitionTension ?? 0;
+    this.noConfidenceCooldown = data.noConfidenceCooldown ?? 0;
+    this.investigations = data.investigations || [];
     this._computeDrivers();
     this._recomputeEffects();
     this._computeBudget();

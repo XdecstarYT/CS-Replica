@@ -817,3 +817,123 @@ html, body {
 .eco-news-item.good .dot { background: var(--good); }
 .eco-news-item.bad .dot  { background: var(--bad); }
 .eco-news-item.neutral .dot { background: var(--text-dim); }
+
+/* ══════════════════════════════════════════════════════════════════
+   NEW POLITICAL FEATURES — CSS
+══════════════════════════════════════════════════════════════════ */
+
+/* Cabinet ministers grid */
+.cabinet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.minister-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r-md);
+  padding: 10px 11px;
+}
+.min-role { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; margin-bottom: 3px; }
+.min-holder { font-size: 14px; font-weight: 800; margin-bottom: 4px; }
+
+/* Referendum card */
+.ref-card {
+  background: rgba(56,189,248,0.07);
+  border: 1px solid rgba(56,189,248,0.3);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+/* Treaty / relation rows */
+.treaty-badge {
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  background: rgba(74,222,128,0.15); color: var(--good);
+  border: 1px solid rgba(74,222,128,0.4);
+  border-radius: 10px; padding: 2px 8px;
+  display: inline-block;
+}
+
+/* Secession risk indicator */
+.sece-bar {
+  height: 6px; border-radius: 4px; overflow: hidden;
+  background: rgba(255,255,255,0.07); margin-top: 4px;
+}
+.sece-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+
+/* Investigation items */
+.inv-item {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 9px 11px; margin-bottom: 6px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px;
+}
+.inv-topic { font-weight: 700; }
+.inv-due { color: var(--text-dim); }
+
+/* Emergency powers banner */
+.emergency-banner {
+  background: rgba(248,113,113,0.12);
+  border: 1.5px solid rgba(248,113,113,0.5);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  font-size: 13px; font-weight: 700;
+  color: #fecaca;
+  margin-bottom: 10px;
+}
+
+/* Watchdog badge */
+.watchdog-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.4);
+  border-radius: var(--r-sm); padding: 6px 10px;
+  font-size: 12px; font-weight: 700; color: var(--good);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   RESPONSIVE UI — auto-fit to device screen size
+══════════════════════════════════════════════════════════════════ */
+
+/* Use dynamic viewport height on supporting browsers */
+@supports (height: 100dvh) {
+  #game-root { height: 100dvh; }
+  .panel { max-height: calc(100dvh - 140px); }
+  .gov-panel { max-height: calc(100dvh - 100px); }
+  #ai-panel  { max-height: calc(100dvh - 110px); }
+  #stats-panel { max-height: calc(100dvh - 100px); }
+}
+
+/* Very small phones (iPhone SE, 375×667) */
+@media (max-width: 390px) {
+  .hud-stat { padding: 6px 8px; font-size: 11px; min-height: 38px; }
+  #hud-top { gap: 3px; padding-left: calc(var(--safe-left) + 4px); padding-right: calc(var(--safe-right) + 4px); }
+  .tool { min-height: 50px; font-size: 9px; }
+  .tool .tool-ico { font-size: 17px; }
+  .tool-name { font-size: 9px; }
+  .gov-cards { grid-template-columns: repeat(2, 1fr); }
+  .cabinet-grid { grid-template-columns: 1fr; }
+}
+
+/* Landscape phones */
+@media (max-height: 500px) and (orientation: landscape) {
+  #hud-top { padding-top: calc(var(--safe-top) + 4px); padding-bottom: 4px; }
+  .panel { max-height: calc(100vh - 90px); bottom: calc(var(--safe-bottom) + 56px); }
+  .gov-panel { max-height: 88vh; }
+  #toolbar { padding-bottom: calc(var(--safe-bottom) + 4px); }
+  .tool { min-height: 44px; }
+  #demand-panel { display: none; }
+}
+
+/* Medium phones (iPhone 12/13/14, Pixel) */
+@media (min-width: 391px) and (max-width: 430px) {
+  .gov-cards { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Notch-aware canvas sizing */
+#city-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+}

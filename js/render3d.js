@@ -33,6 +33,7 @@ class Renderer3D {
 
     // ---- Lights / sky / ground ----
     this._setupLights();
+    this._buildSkyDome();
     this._buildGround();
     this._buildStars();
     this._buildClouds();
@@ -71,34 +72,91 @@ class Renderer3D {
   // ─────────────────────── Setup helpers ───────────────────────
 
   _setupLights() {
-    // Hemisphere — sky colour blends with ground bounce
-    this.hemiLight = new THREE.HemisphereLight(0x9ed4ff, 0x40603a, 0.55);
+    // Hemisphere — sky blue top, warm green ground bounce for physically plausible fill
+    this.hemiLight = new THREE.HemisphereLight(0x9ed8ff, 0x3a5c30, 0.6);
     this.scene.add(this.hemiLight);
 
-    // Sun — main directional light with shadows
-    this.sunLight = new THREE.DirectionalLight(0xfff2cc, 2.2);
+    // Sun — main directional PBR light with high-quality shadow
+    this.sunLight = new THREE.DirectionalLight(0xfff0d0, 2.4);
     this.sunLight.castShadow = true;
     const sc = this.sunLight.shadow.camera;
-    const sh = 46;
+    const sh = 50;
     sc.left = -sh; sc.right = sh; sc.top = sh; sc.bottom = -sh;
-    sc.near = 0.5; sc.far = 220;
-    this.sunLight.shadow.mapSize.set(2048, 2048);
-    this.sunLight.shadow.bias = -0.0004;
-    this.sunLight.shadow.normalBias = 0.02;
+    sc.near = 0.5; sc.far = 240;
+    this.sunLight.shadow.mapSize.set(3072, 3072);
+    this.sunLight.shadow.bias = -0.0003;
+    this.sunLight.shadow.normalBias = 0.018;
+    this.sunLight.shadow.radius = 1.5;  // PCF soft shadow
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    // Moon — cool dim fill at night
-    this.moonLight = new THREE.DirectionalLight(0x6678f0, 0);
+    // Moon — cool blue-violet fill at night
+    this.moonLight = new THREE.DirectionalLight(0x5568e8, 0);
     this.scene.add(this.moonLight);
 
-    // Warm bounce fill from the opposite side (no shadows) for softer shading
-    this.fillLight = new THREE.DirectionalLight(0xffe6c0, 0.25);
+    // Warm bounce fill from the opposite side (no shadows) for soft wraparound shading
+    this.fillLight = new THREE.DirectionalLight(0xffd4a0, 0.28);
     this.scene.add(this.fillLight);
 
-    // Ambient floor so nothing is pure black
-    this.ambLight = new THREE.AmbientLight(0x35506e, 0.4);
+    // City ambient — cool dark blue floor so nothing is pure black
+    this.ambLight = new THREE.AmbientLight(0x2a3f5a, 0.5);
     this.scene.add(this.ambLight);
+
+    // Point light for warm city centre glow at night (dim during day)
+    const gw = this.grid.w, gh = this.grid.h, T = this.T;
+    this.cityGlowLight = new THREE.PointLight(0xff8844, 0, 80);
+    this.cityGlowLight.position.set(gw * T / 2, 8, gh * T / 2);
+    this.cityGlowLight.decay = 1.5;
+    this.scene.add(this.cityGlowLight);
+  }
+
+  // ── Procedural sky dome with atmospheric gradient shader ──
+  _buildSkyDome() {
+    const vertexShader = `
+      varying vec3 vWorldPos;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`;
+    const fragmentShader = `
+      uniform vec3 uZenith;
+      uniform vec3 uHorizon;
+      uniform vec3 uGround;
+      uniform vec3 uSunDir;
+      uniform float uSunIntensity;
+      varying vec3 vWorldPos;
+      void main() {
+        vec3 dir = normalize(vWorldPos - vec3(${this.grid.w * 0.5}, 0.0, ${this.grid.h * 0.5}));
+        float h = clamp(dir.y, -1.0, 1.0);
+        // Sky gradient: zenith → horizon
+        vec3 sky = mix(uHorizon, uZenith, clamp(h * 2.0, 0.0, 1.0));
+        // Below horizon: ground haze
+        if (h < 0.0) sky = mix(uGround, uHorizon, clamp(1.0 + h * 6.0, 0.0, 1.0));
+        // Sun disc + corona
+        float sunDot = dot(dir, normalize(uSunDir));
+        float corona = pow(max(0.0, sunDot), 140.0) * uSunIntensity;
+        float glow   = pow(max(0.0, sunDot), 12.0) * 0.25 * uSunIntensity;
+        sky += vec3(1.0, 0.85, 0.55) * corona + vec3(1.0, 0.6, 0.2) * glow;
+        gl_FragColor = vec4(sky, 1.0);
+      }`;
+    const gw = this.grid.w, gh = this.grid.h;
+    this._skyUniforms = {
+      uZenith:       { value: new THREE.Color(0x1a3a6e) },
+      uHorizon:      { value: new THREE.Color(0x87ceeb) },
+      uGround:       { value: new THREE.Color(0x2a3a28) },
+      uSunDir:       { value: new THREE.Vector3(0, 1, 0) },
+      uSunIntensity: { value: 1.0 },
+    };
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms: this._skyUniforms, vertexShader, fragmentShader,
+      side: THREE.BackSide, depthWrite: false,
+    });
+    const skyGeo = new THREE.SphereGeometry(180, 32, 20);
+    this.skyDome = new THREE.Mesh(skyGeo, skyMat);
+    this.skyDome.position.set(gw * this.T / 2, 0, gh * this.T / 2);
+    this.skyDome.renderOrder = -10;
+    this.scene.add(this.skyDome);
   }
 
   _buildGround() {
@@ -132,8 +190,9 @@ class Renderer3D {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     this.waterMat = new THREE.MeshStandardMaterial({
-      color: 0x1a5f80, roughness: 0.08, metalness: 0.35,
-      emissive: new THREE.Color(0x001428), transparent: true, opacity: 0.9,
+      color: 0x1262a0, roughness: 0.04, metalness: 0.55,
+      emissive: new THREE.Color(0x001830), transparent: true, opacity: 0.88,
+      envMapIntensity: 1.4,
     });
     this.waterMesh = new THREE.Mesh(geo, this.waterMat);
     this.waterMesh.receiveShadow = true;
@@ -810,15 +869,52 @@ class Renderer3D {
     this.ambLight.intensity = 0.08 + d * 0.35;
     this.hemiLight.intensity = 0.15 + d * 0.5;
 
-    // Sky colour
-    const daySky = new THREE.Color(0x87ceeb);
-    const duskSky = new THREE.Color(0xe8602a);
-    const nightSky = new THREE.Color(0x070e22);
-    let sky;
-    if (n < 0.5) sky = daySky.lerp(duskSky, Math.sin(n * Math.PI) * 0.75);
-    else sky = duskSky.clone().lerp(nightSky, (n - 0.5) * 2);
-    this.scene.background = sky;
-    this.scene.fog.color.copy(sky);
+    // Sky dome shader — drive uniforms per time of day
+    if (this._skyUniforms) {
+      // zenith: deep blue day → deep purple/navy night
+      const zenithDay   = new THREE.Color(0x1a4c8f);
+      const zenithDusk  = new THREE.Color(0x3d1a50);
+      const zenithNight = new THREE.Color(0x050d1e);
+      // horizon: sky blue day → orange dusk → dark blue night
+      const horizDay    = new THREE.Color(0xa8d8f0);
+      const horizDusk   = new THREE.Color(0xe8702a);
+      const horizNight  = new THREE.Color(0x0e1a30);
+
+      let zenith, horiz;
+      if (n < 0.5) {
+        const f = Math.sin(n * Math.PI) * 0.85;
+        zenith = zenithDay.clone().lerp(zenithDusk, f);
+        horiz  = horizDay.clone().lerp(horizDusk,  f);
+      } else {
+        const f = (n - 0.5) * 2;
+        zenith = zenithDusk.clone().lerp(zenithNight, f);
+        horiz  = horizDusk.clone().lerp(horizNight,  f);
+      }
+      this._skyUniforms.uZenith.value.copy(zenith);
+      this._skyUniforms.uHorizon.value.copy(horiz);
+      this._skyUniforms.uGround.value.setRGB(0.14 + d * 0.08, 0.18 + d * 0.08, 0.10 + d * 0.03);
+
+      // Sun direction fed to shader for disc/glow
+      const sx = Math.sin(sunAngle), sy = sunElev, sz = -0.6;
+      const sl = Math.sqrt(sx*sx + sy*sy + sz*sz);
+      this._skyUniforms.uSunDir.value.set(sx/sl, sy/sl, sz/sl);
+      this._skyUniforms.uSunIntensity.value = Math.max(0, sunElev * 1.2);
+
+      // Sync the plain background to mid-horizon color for canvas clear
+      this.scene.background = horiz.clone().lerp(zenith, 0.3);
+      // Fog matches near-horizon color
+      this.scene.fog.color.copy(horiz).lerp(zenith, 0.1);
+      this.scene.fog.density = 0.009 + n * 0.003;
+    } else {
+      const daySky = new THREE.Color(0x87ceeb);
+      const duskSky = new THREE.Color(0xe8602a);
+      const nightSky = new THREE.Color(0x070e22);
+      let sky;
+      if (n < 0.5) sky = daySky.lerp(duskSky, Math.sin(n * Math.PI) * 0.75);
+      else sky = duskSky.clone().lerp(nightSky, (n - 0.5) * 2);
+      this.scene.background = sky;
+      this.scene.fog.color.copy(sky);
+    }
 
     // Stars
     this.starMat.opacity = Math.max(0, (n - 0.55) * 2.5);
@@ -826,15 +922,24 @@ class Renderer3D {
     // Weather overlay: precipitation + sky/fog/light modulation
     this._updateWeather(d);
 
-    // Clouds drift + dim at night
+    // Clouds drift, lit by sun/dusk colour + dim at night
     const tm = performance.now() / 1000;
     if (this.clouds) {
-      const cloudLit = 0.25 + d * 0.6;
-      this.cloudMat.opacity = 0.30 + d * 0.55;
-      this.cloudMat.color.setRGB(cloudLit, cloudLit, cloudLit * 1.02);
+      const cloudLit = 0.22 + d * 0.78;
+      // During sunset: clouds take on warm orange/pink tones
+      const duskFactor = Math.max(0, Math.sin(n * Math.PI) * 0.8);
+      const cr = cloudLit + duskFactor * 0.35;
+      const cg = cloudLit + duskFactor * 0.12;
+      const cb = cloudLit - duskFactor * 0.1;
+      this.cloudMat.opacity = 0.25 + d * 0.60;
+      this.cloudMat.color.setRGB(Math.min(1, cr), Math.min(1, cg), Math.min(1, cb));
+      // Subtle emissive glow from city lights at night
+      this.cloudMat.emissive.setRGB(n * 0.04, n * 0.025, n * 0.01);
       for (const c of this.clouds) {
         c.group.position.x += c.speed * 0.016;
         if (c.group.position.x > this.cloudSpan - 20) c.group.position.x = -20;
+        // Altitude oscillation for more natural look
+        c.group.position.y = c.group.position.y + Math.sin(tm * 0.08 + c.speed * 10) * 0.002;
       }
     }
 
@@ -854,14 +959,25 @@ class Renderer3D {
     const lampGlow = Math.max(0, Math.min(1, (n - 0.25) * 1.6));
     this.models.lampBulbMat.emissive.setRGB(lampGlow * 1.0, lampGlow * 0.82, lampGlow * 0.28);
 
-    // Water shimmer
+    // Water shimmer — more dynamic ripple effect
     if (this.waterMat) {
-      const br = 0.12 + d * 0.22 + Math.sin(tm * 1.2) * 0.03;
-      this.waterMat.emissive.setRGB(br * 0.05, br * 0.18, br * 0.38);
+      const w1 = Math.sin(tm * 1.3) * 0.04 + Math.sin(tm * 0.7) * 0.02;
+      const w2 = Math.cos(tm * 0.9) * 0.02 + Math.sin(tm * 1.7) * 0.015;
+      const br = 0.10 + d * 0.28 + w1 + w2;
+      // At night: city light reflection on water
+      const cityGlow = n * 0.06;
+      this.waterMat.emissive.setRGB(br * 0.05 + cityGlow * 0.5, br * 0.20 + cityGlow * 0.4, br * 0.42 + cityGlow * 0.2);
+      this.waterMat.roughness = 0.04 + Math.abs(w1) * 0.08;
     }
 
-    // Tone mapping exposure — warmer at dusk
-    this.wgl.toneMappingExposure = 0.95 + d * 0.2 + Math.max(0, Math.sin(n * Math.PI) * 0.25);
+    // City glow point light — warm neon bloom at night
+    if (this.cityGlowLight) {
+      this.cityGlowLight.intensity = n * n * 1.8;
+      this.cityGlowLight.color.setRGB(1.0, 0.55 + n * 0.1, 0.25);
+    }
+
+    // Tone mapping exposure — warmer at dusk, slightly dimmer at night for realism
+    this.wgl.toneMappingExposure = 0.90 + d * 0.25 + Math.max(0, Math.sin(n * Math.PI) * 0.28) - n * 0.05;
 
     // Traffic-light signal cycle (shared materials → global synchronised cycle)
     const phase = tm % 6.0;
