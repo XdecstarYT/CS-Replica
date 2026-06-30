@@ -14,6 +14,7 @@ class Game {
     this.weather = new Weather(this);
     this.stats = new Stats(this);
     this.automayor = new AutoMayor(this);
+    this.achievements = new Achievements(this);
     this.ui = new UI(this);
     this.politicsUI = new PoliticsUI(this);
     this.statsUI = new StatsUI(this);
@@ -203,6 +204,7 @@ class Game {
         // ── Economy, weather & statistics weekly tick ──
         this.economy.tick();
         this.weather.tick();
+        this.achievements.tick();
         this.stats.sample();
         if (this.statsUI) this.statsUI.update();
 
@@ -229,6 +231,7 @@ class Game {
         economy: this.economy.serialize(), weather: this.weather.serialize(), stats: this.stats.serialize(),
         construction: this.construction.serialize(),
         mode: this.mode,
+        achievements: this.achievements.serialize(),
         v: 3,
       };
       localStorage.setItem(CONFIG.AUTOSAVE_KEY, JSON.stringify(data));
@@ -261,6 +264,7 @@ class Game {
       this.stats.reset();    if (data.stats) this.stats.load(data.stats);
       this.politicsUI.reset();
       this.automayor.reset();
+      this.achievements.reset(); if (data.achievements) this.achievements.load(data.achievements);
       // Restore game mode (quietly — don't reset the camera/tool mid-load).
       this.mode = (data.mode === 'observer') ? 'observer' : 'mayor';
       document.body.classList.toggle('observer-mode', this.mode === 'observer');
@@ -338,6 +342,7 @@ class Game {
     this.stats.reset();
     this.politicsUI.reset();
     this.automayor.reset();
+    this.achievements.reset();
     this.renderer.setOverlay(null);
     this.ui.toast('New city founded');
   }

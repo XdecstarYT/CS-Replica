@@ -851,6 +851,10 @@ class Renderer3D {
           }
         }
         else if (mode === 'services'){ v = f ? Math.min(1, (f.safety[i] + f.health[i] + f.happy[i] + f.education[i]) / 2) : 0; col = [192, 132, 252]; }
+        else if (mode === 'crime')   { if (g.pop[i] > 0 && f) { v = Math.max(0, 1 - Math.min(1, f.safety[i])); col = [220, 60, 60]; } }
+        else if (mode === 'health')  { v = f ? Math.min(1, f.health[i]) : 0; col = [244, 114, 182]; }
+        else if (mode === 'education'){ v = f ? Math.min(1, f.education[i]) : 0; col = [129, 140, 248]; }
+        else if (mode === 'fire')    { const built = g.built ? g.built[i] : g.level[i]; if (built > 0 && f) { v = (built / 4) * Math.max(0.2, 1 - Math.min(1, f.safety[i])); col = [255, 120, 30]; } }
         else if (mode === 'pollution') {
           v = (f && f.pollution) ? Math.min(1, f.pollution[i] * 1.2) : 0;
           col = [Math.round(120 + 120 * v), Math.round(150 * (1 - v) + 40), 40];   // green→brown smog

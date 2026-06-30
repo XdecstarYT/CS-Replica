@@ -289,7 +289,8 @@ class UI {
       `Happiness: <b>${Math.round(s.happiness * 100)}%</b><br>` +
       `Power: <b>${s.powerCap || 0}</b> cap<br>` +
       `Weekly balance: <b>${this.fmtMoney(s.lastBalance)}</b><br>` +
-      `Week: <b>${s.week}</b>`;
+      `Week: <b>${s.week}</b><br>` +
+      (this.game.achievements ? `🏆 Achievements: <b>${this.game.achievements.count} / ${this.game.achievements.total}</b>` : '');
   }
 
   fmtMoney(v) {

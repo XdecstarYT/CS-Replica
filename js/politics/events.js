@@ -182,6 +182,81 @@ const POL_EVENTS = [
         effects: { approval: -3, media: -3, popularity: { libt: -3 }, news: 'Crackdown on whistleblower alarms civil-liberties groups.' } },
     ],
   },
+
+  // ───────── Additional events ─────────
+  { id: 'festival', title: 'City Festival Proposal', cat: 'Culture', weight: 6, blurb: 'Promoters pitch a huge street festival.', choices: [
+    { label: 'Fund it fully', desc: 'Costly but joyful.', effects: { money: -6000, approval: 4, happyAddTmp: 0.06, news: 'City throws its biggest festival yet!' } },
+    { label: 'Public-private mix', desc: 'Share the cost.', effects: { money: -2000, approval: 2, happyAddTmp: 0.03, news: 'Sponsored festival lights up downtown.' } },
+    { label: 'Decline', desc: 'Save the cash.', effects: { approval: -1, news: 'Council passes on festival plan.' } } ] },
+  { id: 'strike', title: 'Transit Workers Strike', cat: 'Labor', weight: 6, blurb: 'Bus and metro staff threaten to walk out.', choices: [
+    { label: 'Meet their demands', desc: 'Costly peace.', effects: { money: -7000, approval: 2, popularity: { soc: 2 }, news: 'Pay deal averts transit strike.' } },
+    { label: 'Hold firm', desc: 'Risk chaos.', effects: { approval: -4, stability: -4, happyAddTmp: -0.05, news: 'Transit grinds to a halt as strike begins.' } } ] },
+  { id: 'flood', title: 'Flood Warning', cat: 'Disaster', weight: 5, blurb: 'Heavy rains threaten low-lying districts.', choices: [
+    { label: 'Emergency flood defenses', desc: 'Spend to protect.', effects: { money: -9000, approval: 3, stability: 3, news: 'Flood barriers spare the city the worst.' } },
+    { label: 'Hope it passes', desc: 'Gamble.', effects: { money: -3000, approval: -5, stability: -5, happyAddTmp: -0.06, news: 'Floods damage homes; mayor faces blame.' } } ] },
+  { id: 'blackout', title: 'Power Grid Strain', cat: 'Infrastructure', weight: 6, blurb: 'Demand is outpacing supply; brownouts loom.', choices: [
+    { label: 'Emergency generators', desc: 'Quick, dirty fix.', effects: { money: -5000, approval: 1, news: 'Generators keep the lights on.' } },
+    { label: 'Rolling blackouts', desc: 'Ration power.', effects: { approval: -4, happyAddTmp: -0.05, news: 'Rolling blackouts anger residents.' } } ] },
+  { id: 'startup_pitch', title: 'Unicorn Startup', cat: 'Economy', weight: 6, blurb: 'A fast-growing startup wants HQ incentives.', choices: [
+    { label: 'Offer the package', desc: 'Bet on jobs.', effects: { money: -8000, approval: 3, popularity: { con: 2, lib: 1 }, news: 'Startup HQ to bring thousands of jobs.' } },
+    { label: 'Negotiate equity', desc: 'Share the upside.', effects: { money: 5000, approval: 1, news: 'City takes a stake in startup deal.' } } ] },
+  { id: 'pandemic', title: 'Disease Outbreak', cat: 'Health', weight: 4, blurb: 'A contagious illness is spreading.', choices: [
+    { label: 'Fund response & testing', desc: 'Costly, responsible.', effects: { money: -10000, approval: 3, stability: 2, news: 'Swift health response contains outbreak.' } },
+    { label: 'Downplay it', desc: 'Risky inaction.', effects: { approval: -6, stability: -5, happyAddTmp: -0.08, news: 'Outbreak worsens amid slow response.' } } ] },
+  { id: 'olympics', title: 'Host the Games?', cat: 'Culture', weight: 3, when: g => g.game.sim.population > 8000, blurb: 'The city is shortlisted to host a global sporting event.', choices: [
+    { label: 'Bid to host', desc: 'Prestige & tourism, huge cost.', effects: { money: -20000, approval: 6, happyAddTmp: 0.08, news: 'City wins bid to host the Games!' } },
+    { label: 'Withdraw', desc: 'Too risky.', effects: { approval: -2, news: 'City pulls out of hosting race.' } } ] },
+  { id: 'wildfire', title: 'Wildfire Risk', cat: 'Disaster', weight: 4, blurb: 'A dry season raises wildfire danger at the edges.', choices: [
+    { label: 'Prevention crews', desc: 'Fund firebreaks.', effects: { money: -5000, stability: 3, news: 'Fire crews clear brush ahead of the season.' } },
+    { label: 'Cross fingers', desc: 'Save money.', effects: { approval: -3, stability: -4, news: 'Wildfire scorches outskirts; criticism mounts.' } } ] },
+  { id: 'tech_grant', title: 'National Tech Grant', cat: 'Economy', weight: 6, blurb: 'A national fund offers an innovation grant — with strings.', choices: [
+    { label: 'Accept conditions', desc: 'Cash for compliance.', effects: { money: 12000, approval: 2, news: 'City lands major tech grant.' } },
+    { label: 'Decline strings', desc: 'Keep autonomy.', effects: { approval: 1, popularity: { libt: 2 }, news: 'City rejects grant over conditions.' } } ] },
+  { id: 'protest_march', title: 'Mass Protest', cat: 'Civil', weight: 6, when: g => g.approval < 45, blurb: 'Thousands march over the cost of living.', choices: [
+    { label: 'Meet the organisers', desc: 'Listen & concede.', effects: { approval: 3, stability: 4, happyAddTmp: 0.03, news: 'Mayor meets protest leaders, pledges action.' } },
+    { label: 'Deploy police', desc: 'Show of force.', effects: { approval: -4, stability: -3, popularity: { libt: -2 }, news: 'Heavy-handed response draws condemnation.' } } ] },
+  { id: 'art_donation', title: 'Billionaire Art Gift', cat: 'Culture', weight: 5, blurb: 'A patron offers a world-class art collection — if you build a wing.', choices: [
+    { label: 'Build the wing', desc: 'Invest in culture.', effects: { money: -7000, approval: 3, happyAddTmp: 0.04, news: 'New museum wing draws global acclaim.' } },
+    { label: 'Politely decline', desc: 'Not now.', effects: { approval: -1, news: 'City declines costly art gift.' } } ] },
+  { id: 'water_short', title: 'Water Shortage', cat: 'Infrastructure', weight: 5, blurb: 'A drought is draining reservoirs.', choices: [
+    { label: 'Mandatory rationing', desc: 'Unpopular but prudent.', effects: { approval: -3, stability: 2, happyAddTmp: -0.03, news: 'Water rationing imposed during drought.' } },
+    { label: 'Emergency pipeline', desc: 'Expensive fix.', effects: { money: -11000, approval: 2, news: 'New pipeline secures water supply.' } } ] },
+  { id: 'crime_wave', title: 'Crime Wave', cat: 'Safety', weight: 6, when: g => g.drivers.crime > 0.45, blurb: 'A spike in crime has residents on edge.', choices: [
+    { label: 'Surge policing', desc: 'Costly crackdown.', effects: { money: -6000, approval: 3, stability: 3, news: 'Police surge brings crime under control.' } },
+    { label: 'Social programs', desc: 'Address root causes.', effects: { money: -4000, approval: 1, happyAddTmp: 0.03, popularity: { soc: 2, grn: 1 }, news: 'City invests in youth & jobs to fight crime.' } } ] },
+  { id: 'film_studio', title: 'Film Studio Interest', cat: 'Economy', weight: 5, blurb: 'A studio scouts the city for a production hub.', choices: [
+    { label: 'Tax credits', desc: 'Lure the cameras.', effects: { money: -5000, approval: 2, happyAddTmp: 0.03, news: 'Hollywood comes to town with new studio.' } },
+    { label: 'Pass', desc: 'Not worth it.', effects: { news: 'Studio looks elsewhere.' } } ] },
+  { id: 'corruption_tip', title: 'Whistleblower Tip', cat: 'Scandal', weight: 5, blurb: 'An insider offers evidence of contractor kickbacks.', choices: [
+    { label: 'Investigate fully', desc: 'Clean house.', effects: { approval: 2, stability: 3, media: 2, news: 'Probe roots out contractor corruption.' } },
+    { label: 'Bury it', desc: 'Avoid scandal.', effects: { money: -4000, media: -2, stability: -2, news: 'Quiet settlement raises eyebrows.' } } ] },
+  { id: 'green_award', title: 'Green City Award', cat: 'Environment', weight: 5, when: g => g.game.sim.avgPollution < 0.15, blurb: 'The city is nominated for a sustainability prize.', choices: [
+    { label: 'Campaign for it', desc: 'Spend on the bid.', effects: { money: -3000, approval: 4, happyAddTmp: 0.05, popularity: { grn: 3 }, news: 'City wins national Green City award!' } },
+    { label: 'Stay humble', desc: 'Let results speak.', effects: { approval: 2, popularity: { grn: 1 }, news: 'City quietly celebrates clean-air milestone.' } } ] },
+  { id: 'refugees', title: 'Refugee Resettlement', cat: 'Immigration', weight: 5, blurb: 'A national program asks the city to resettle families.', choices: [
+    { label: 'Welcome them', desc: 'Growth & goodwill, polarising.', effects: { approval: 1, happyAddTmp: 0.02, popularity: { soc: 2, grn: 1, nat: -2 }, news: 'City opens its doors to refugees.' } },
+    { label: 'Decline quota', desc: 'Avoid friction.', effects: { popularity: { nat: 2, soc: -2 }, news: 'City declines resettlement request.' } } ] },
+  { id: 'stadium_deal', title: 'Pro Team Relocation', cat: 'Culture', weight: 4, when: g => g.game.sim.population > 12000, blurb: 'A pro sports team will relocate — if you fund a stadium.', choices: [
+    { label: 'Fund the stadium', desc: 'Civic pride, big spend.', effects: { money: -18000, approval: 5, happyAddTmp: 0.06, news: 'Pro team coming to town!' } },
+    { label: 'Refuse subsidy', desc: 'Protect taxpayers.', effects: { approval: 1, popularity: { libt: 2 }, news: 'City refuses to subsidise stadium.' } } ] },
+  { id: 'data_breach', title: 'City Data Breach', cat: 'Tech', weight: 5, blurb: 'Hackers breach municipal systems.', choices: [
+    { label: 'Invest in cybersecurity', desc: 'Fix it properly.', effects: { money: -6000, approval: 1, stability: 2, news: 'City hardens defenses after breach.' } },
+    { label: 'Minimal response', desc: 'Hope it blows over.', effects: { approval: -3, media: -2, news: 'Critics slam weak response to data breach.' } } ] },
+  { id: 'trade_deal', title: 'Regional Trade Pact', cat: 'Economy', weight: 5, blurb: 'Neighbouring cities propose a trade alliance.', choices: [
+    { label: 'Join the pact', desc: 'Open markets.', effects: { money: 4000, approval: 2, popularity: { con: 1, lib: 1 }, news: 'City joins regional trade alliance.' } },
+    { label: 'Protect local firms', desc: 'Go it alone.', effects: { popularity: { nat: 2 }, news: 'City opts out of trade pact.' } } ] },
+  { id: 'heatwave', title: 'Record Heatwave', cat: 'Disaster', weight: 5, blurb: 'A brutal heatwave endangers vulnerable residents.', choices: [
+    { label: 'Open cooling centers', desc: 'Protect people.', effects: { money: -3000, approval: 3, happyAddTmp: 0.02, news: 'Cooling centers save lives in heatwave.' } },
+    { label: 'Issue advisories only', desc: 'Cheap.', effects: { approval: -2, happyAddTmp: -0.03, news: 'Heatwave strains the city; questions over response.' } } ] },
+  { id: 'university_bid', title: 'New University Campus', cat: 'Education', weight: 4, blurb: 'A university wants to open a campus downtown.', choices: [
+    { label: 'Donate the land', desc: 'Invest in knowledge.', effects: { money: -9000, approval: 4, happyAddTmp: 0.04, popularity: { lib: 2, grn: 1 }, news: 'New university campus to anchor downtown.' } },
+    { label: 'Sell at market rate', desc: 'Fill the coffers.', effects: { money: 7000, approval: 1, news: 'University buys downtown site.' } } ] },
+  { id: 'mural_project', title: 'Public Art Initiative', cat: 'Culture', weight: 6, blurb: 'Local artists propose murals across the city.', choices: [
+    { label: 'Commission murals', desc: 'Brighten the streets.', effects: { money: -2000, approval: 2, happyAddTmp: 0.03, popularity: { grn: 1, lib: 1 }, news: 'Vibrant murals transform the city.' } },
+    { label: 'Decline', desc: 'Not a priority.', effects: { approval: -1, news: 'Mural plan shelved.' } } ] },
+  { id: 'pension_crisis', title: 'Pension Shortfall', cat: 'Economy', weight: 5, blurb: 'The city pension fund is underfunded.', choices: [
+    { label: 'Top it up now', desc: 'Responsible, costly.', effects: { money: -12000, approval: 1, stability: 3, news: 'City shores up pension fund.' } },
+    { label: 'Kick the can', desc: 'Defer the problem.', effects: { approval: -2, stability: -3, news: 'Pension gap left for the future.' } } ] },
 ];
 
 if (typeof module !== 'undefined') module.exports = { POL_EVENTS };

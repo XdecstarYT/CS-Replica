@@ -195,17 +195,20 @@ class Simulation {
               * (pm.taxMult ?? 1) * (em.taxMult ?? 1) + property + (pm.revenueAdd || 0);
     let upkeep = 0;
     let roadCount = 0;
+    let svcRevenue = 0;
     for (let i = 0; i < g.type.length; i++) {
       if (g.type[i] === TILE.ROAD) roadCount++;
       if (g.type[i] === TILE.SERVICE) {
         const svc = SERVICE_BY_ID[g.service[i]];
-        if (svc) upkeep += svc.upkeep;
+        if (svc) { upkeep += svc.upkeep; if (svc.revenue) svcRevenue += svc.revenue; }
       }
     }
     upkeep += roadCount * UPKEEP_PER_ROAD;
     upkeep += (pm.upkeepAdd || 0);   // policy upkeep / debt servicing (can be negative = savings)
     upkeep += (en.upkeepAdd || 0);   // weather heating/cooling load
-    this.lastBalance = Math.round(tax - upkeep);
+    // Tourism / transport buildings earn more when the city is busy and happy.
+    const tourism = svcRevenue * (0.6 + this.happiness * 0.6) * (em.taxMult ?? 1);
+    this.lastBalance = Math.round(tax + tourism - upkeep);
     this.money += this.lastBalance;
     this.week++;
 
