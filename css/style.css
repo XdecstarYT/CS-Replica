@@ -62,10 +62,15 @@ html, body {
   display: flex;
   gap: 5px;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;                 /* never wrap into rows that overlap the map */
+  overflow-x: auto;                  /* extra chips scroll horizontally instead */
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   z-index: 10;
   pointer-events: none;
 }
+#hud-top::-webkit-scrollbar { display: none; }
+#hud-top > * { flex: 0 0 auto; }     /* keep chips their natural width */
 
 .hud-stat {
   pointer-events: auto;

@@ -169,7 +169,7 @@ class ModelBuilder {
   _facadeMat(key, cfg) {
     if (this._facCache[key]) return this._facCache[key];
     const { cols, rows, wall, glass, frame, style } = cfg;
-    const S = 256;
+    const S = 512;
     const dayC = document.createElement('canvas'); dayC.width = dayC.height = S;
     const ngtC = document.createElement('canvas'); ngtC.width = ngtC.height = S;
     const d = dayC.getContext('2d'), n = ngtC.getContext('2d');
@@ -215,10 +215,11 @@ class ModelBuilder {
     d.strokeStyle = 'rgba(0,0,0,0.22)'; d.lineWidth = 1;
     for (let r = 1; r < rows; r++) { d.beginPath(); d.moveTo(0, r * ch); d.lineTo(S, r * ch); d.stroke(); }
 
-    const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.anisotropy = 8; return t; };
+    const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.anisotropy = 16; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; return t; };
     const rough = style === 'glass' ? 0.12 : style === 'office' ? 0.42 : 0.7;
     const metal = style === 'glass' ? 0.35 : style === 'office' ? 0.18 : 0.05;
     const mat = Std({ map: mk(dayC), emissiveMap: mk(ngtC), emissive: new THREE.Color(0, 0, 0), roughness: rough, metalness: metal });
+    mat.envMapIntensity = style === 'glass' ? 1.3 : style === 'office' ? 0.85 : 0.4;
     this._facCache[key] = mat;
     return mat;
   }
@@ -819,8 +820,10 @@ class ModelBuilder {
     const type = this._vehicleMix[index % this._vehicleMix.length];
     const color = this.vehicleColors[index % this.vehicleColors.length];
     const group = new THREE.Group();
-    // Two-tone-capable PBR body paint with a faint clearcoat sheen.
-    const bodyMat = Std({ color, roughness: 0.30, metalness: 0.45 });
+    // Glossy automotive clear-coat paint — low roughness + strong env reflection
+    // so the body catches the sky/sun highlight like a real car.
+    const bodyMat = Std({ color, roughness: 0.18, metalness: 0.55 });
+    bodyMat.envMapIntensity = 1.4;
     group._bodyMat = bodyMat;
 
     if      (type === 0) this._buildSedan(group, bodyMat);

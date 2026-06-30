@@ -33,6 +33,7 @@ class Renderer3D {
 
     // ---- Lights / sky / ground ----
     this._setupLights();
+    this._buildEnvironment();   // PMREM sky reflections for glass + car paint
     this._buildSkyDome();
     this._buildGround();
     this._buildStars();
@@ -70,6 +71,33 @@ class Renderer3D {
   }
 
   // ─────────────────────── Setup helpers ───────────────────────
+
+  // Image-based lighting: a soft sky→ground gradient turned into a prefiltered
+  // environment map. Every PBR material picks it up automatically — glass towers
+  // gain real sky reflections and car paint reads as glossy clear-coat.
+  _buildEnvironment() {
+    try {
+      const pmrem = new THREE.PMREMGenerator(this.wgl);
+      const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+      const ctx = c.getContext('2d');
+      const g = ctx.createLinearGradient(0, 0, 0, 128);
+      g.addColorStop(0.00, '#b9dcff');   // zenith
+      g.addColorStop(0.46, '#dcebf7');   // horizon haze
+      g.addColorStop(0.52, '#aeb6bd');   // ground line
+      g.addColorStop(1.00, '#6c7177');   // ground bounce
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 128);
+      // a soft sun spot for a believable highlight
+      const sun = ctx.createRadialGradient(190, 34, 2, 190, 34, 34);
+      sun.addColorStop(0, 'rgba(255,250,235,0.95)'); sun.addColorStop(1, 'rgba(255,250,235,0)');
+      ctx.fillStyle = sun; ctx.fillRect(150, 0, 90, 70);
+      const tex = new THREE.CanvasTexture(c);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      const rt = pmrem.fromEquirectangular(tex);
+      this.scene.environment = rt.texture;
+      this._envMap = rt.texture;
+      tex.dispose(); pmrem.dispose();
+    } catch (e) { /* environment optional — scene still renders */ }
+  }
 
   _setupLights() {
     // Hemisphere — sky blue top, warm green ground bounce for physically plausible fill
