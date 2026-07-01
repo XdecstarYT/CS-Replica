@@ -294,6 +294,18 @@ class Game {
     }
   }
 
+  // ---- Update Area: re-survey the map for fresh natural-resource deposits ----
+  surveyResources() {
+    const cost = 2000;
+    if (this.sim.money < cost) { this._deny(`Need $${cost.toLocaleString()} to survey`); return false; }
+    this.sim.money -= cost;
+    this.grid._genResources();
+    if (this.renderer.overlayMode) this.renderer.updateOverlay(this.sim);
+    let n = 0; for (let i = 0; i < this.grid.resource.length; i++) if (this.grid.resource[i]) n++;
+    this.ui.toast(`Area surveyed — ${n} resource tiles mapped. View with ⛏️ overlay.`);
+    return true;
+  }
+
   // ---- Map expansion ----
   // Grow the map outward. Because the grid width changes, every index-keyed
   // cache must be remapped: we snapshot construction projects by (x,y), expand,

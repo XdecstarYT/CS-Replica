@@ -33,6 +33,18 @@ const ZONE_OF = {
   'zone-ind': TILE.ZONE_IND,
 };
 
+// Natural resource deposits found in the ground. Industry built on or near a
+// deposit gets a capacity boost and earns export revenue — the basis of a
+// resource-driven industrial economy.
+const RESOURCE = { NONE: 0, ORE: 1, OIL: 2, FOREST: 3, FARM: 4, COAL: 5 };
+const RESOURCE_META = {
+  [RESOURCE.ORE]:    { id: 'ore',    name: 'Ore Deposit',    ico: '⛏️', color: '#9ca3af', capBonus: 0.6, export: 1.4 },
+  [RESOURCE.OIL]:    { id: 'oil',    name: 'Oil Field',      ico: '🛢️', color: '#1f2937', capBonus: 0.5, export: 1.8 },
+  [RESOURCE.FOREST]: { id: 'forest', name: 'Forest',         ico: '🌲', color: '#166534', capBonus: 0.4, export: 1.0 },
+  [RESOURCE.FARM]:   { id: 'farm',   name: 'Fertile Land',   ico: '🌾', color: '#ca8a04', capBonus: 0.4, export: 0.9 },
+  [RESOURCE.COAL]:   { id: 'coal',   name: 'Coal Seam',      ico: '🪨', color: '#374151', capBonus: 0.5, export: 1.3 },
+};
+
 // Service / civic buildings the player can place.
 const SERVICES = [
   { id: 'power',   name: 'Power Plant', ico: '⚡', cost: 4000, upkeep: 120, range: 9,  power: 220, water: 0,   pollution: 20, color: '#facc15' },

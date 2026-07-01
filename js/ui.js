@@ -84,6 +84,11 @@ class UI {
       this.game.expandMap(16);
       this.toggleMenu(false);
     });
+    const surveyBtn = document.getElementById('btn-survey');
+    if (surveyBtn) surveyBtn.addEventListener('click', () => {
+      this.game.surveyResources();
+      this.toggleMenu(false);
+    });
     // Tax policy
     this.el.taxSlider.addEventListener('input', () => {
       const pct = parseInt(this.el.taxSlider.value, 10);

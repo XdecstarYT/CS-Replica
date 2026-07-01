@@ -223,7 +223,9 @@ class AutoMayor {
       const sC = sim.demand.com * prefs.com * (1.05 - dist * 0.5) * comShort;
       // Industry favours the rim but stays viable centrally; a scarce-industry
       // nudge keeps the economy productive even under a green administration.
-      const sI = sim.demand.ind * prefs.ind * (0.8 + dist * 0.6) * indShort;
+      // Natural-resource deposits are prime industrial land — build there.
+      const onResource = g.resource && (g.resource[g.idx(x, y)] || (g.resourceNear && g.resourceNear(x, y)));
+      const sI = sim.demand.ind * prefs.ind * (0.8 + dist * 0.6) * indShort * (onResource ? 2.2 : 1);
       let zoneTile = TILE.ZONE_RES, best = sR;
       if (sC > best) { best = sC; zoneTile = TILE.ZONE_COM; }
       if (sI > best) { best = sI; zoneTile = TILE.ZONE_IND; }

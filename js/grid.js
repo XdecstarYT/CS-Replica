@@ -14,6 +14,7 @@ class Grid {
     this.power = new Uint8Array(n);
     this.water = new Uint8Array(n);
     this.land = new Float32Array(n);   // land value 0..1
+    this.resource = new Uint8Array(n); // RESOURCE.* natural deposit under the tile
     this.generate();
   }
 
@@ -21,21 +22,61 @@ class Grid {
   inBounds(x, y) { return x >= 0 && y >= 0 && x < this.w && y < this.h; }
 
   generate() {
-    // Simple terrain: grass everywhere, a meandering river, a couple lakes.
+    // Grass everywhere, with water kept to the EDGES so the centre — where the
+    // camera starts and players build first — is always clear, buildable land.
     for (let i = 0; i < this.type.length; i++) this.type[i] = TILE.GRASS;
+    const W = this.w, H = this.h;
 
-    // River: a sine-ish band crossing the map.
-    const cx = this.w * 0.5;
-    for (let y = 0; y < this.h; y++) {
-      const rx = Math.round(cx + Math.sin(y / 7) * 6 + Math.sin(y / 3) * 2);
+    // A coastal river hugging one side (offset well away from centre) that
+    // wanders only within the outer ~22% of the map.
+    const edge = Math.max(3, Math.round(W * 0.14));
+    for (let y = 0; y < H; y++) {
+      const rx = Math.round(edge + Math.sin(y / 8) * 3 + Math.sin(y / 3) * 1.2);
       for (let dx = -1; dx <= 1; dx++) {
         const x = rx + dx;
-        if (this.inBounds(x, y)) this.type[this.idx(x, y)] = TILE.WATER;
+        if (this.inBounds(x, y) && x < W * 0.24) this.type[this.idx(x, y)] = TILE.WATER;
       }
     }
-    // A lake.
-    this._blob(this.w * 0.78, this.h * 0.28, 5, TILE.WATER);
-    this._blob(this.w * 0.2, this.h * 0.72, 4, TILE.WATER);
+    // Corner lakes only.
+    this._blob(W * 0.88, H * 0.14, 4, TILE.WATER);
+    this._blob(W * 0.90, H * 0.86, 4, TILE.WATER);
+
+    this._genResources();
+  }
+
+  // Scatter natural-resource deposits across grass tiles as a few clustered
+  // fields per type. Deposits sit under the terrain and never block building.
+  _genResources() {
+    if (!this.resource) this.resource = new Uint8Array(this.w * this.h);
+    this.resource.fill(RESOURCE.NONE);
+    const kinds = [RESOURCE.ORE, RESOURCE.OIL, RESOURCE.FOREST, RESOURCE.FARM, RESOURCE.COAL];
+    const fields = Math.max(6, Math.round((this.w * this.h) / 500));
+    for (let f = 0; f < fields; f++) {
+      const kind = kinds[(Math.random() * kinds.length) | 0];
+      const cx = 2 + Math.random() * (this.w - 4);
+      const cy = 2 + Math.random() * (this.h - 4);
+      const r = 2 + Math.random() * 3;
+      for (let y = Math.floor(cy - r); y <= cy + r; y++) {
+        for (let x = Math.floor(cx - r); x <= cx + r; x++) {
+          if (!this.inBounds(x, y)) continue;
+          const i = this.idx(x, y);
+          if (this.type[i] === TILE.WATER) continue;
+          if (Math.hypot(x - cx, y - cy) <= r * (0.7 + Math.random() * 0.4)) this.resource[i] = kind;
+        }
+      }
+    }
+  }
+
+  // Best resource at/near a tile (radius 1) → { kind, meta } or null.
+  resourceNear(x, y) {
+    let best = RESOURCE.NONE;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (!this.inBounds(nx, ny)) continue;
+      const r = this.resource[this.idx(nx, ny)];
+      if (r && (dx === 0 && dy === 0 ? true : best === RESOURCE.NONE)) best = r;
+    }
+    return best;
   }
 
   _blob(cx, cy, r, t) {
@@ -62,6 +103,7 @@ class Grid {
     const built = new Uint8Array(n);
     const service = new Array(n).fill(null);
     const pop = new Uint16Array(n);
+    const resource = new Uint8Array(n);
     for (let y = 0; y < oh; y++) {
       for (let x = 0; x < ow; x++) {
         const oi = y * ow + x, ni = y * nw + x;
@@ -70,16 +112,35 @@ class Grid {
         built[ni] = this.built ? this.built[oi] : this.level[oi];
         service[ni] = this.service[oi];
         pop[ni] = this.pop[oi];
+        if (this.resource) resource[ni] = this.resource[oi];
       }
     }
     this.w = nw; this.h = nh;
     this.type = type; this.level = level; this.built = built;
-    this.service = service; this.pop = pop;
+    this.service = service; this.pop = pop; this.resource = resource;
     this.power = new Uint8Array(n);
     this.water = new Uint8Array(n);
     this.land = new Float32Array(n);
     this._extendTerrain(ow, oh);
+    this._seedResourcesIn(ow, oh);
     return { ow, oh, nw, nh };
+  }
+
+  // Seed fresh resource fields into newly-added land only.
+  _seedResourcesIn(ow, oh) {
+    const kinds = [RESOURCE.ORE, RESOURCE.OIL, RESOURCE.FOREST, RESOURCE.FARM, RESOURCE.COAL];
+    const newFields = Math.max(3, Math.round(((this.w * this.h) - (ow * oh)) / 500));
+    for (let f = 0; f < newFields; f++) {
+      const kind = kinds[(Math.random() * kinds.length) | 0];
+      const cx = Math.random() * this.w, cy = Math.random() * this.h;
+      const r = 2 + Math.random() * 3;
+      for (let y = Math.floor(cy - r); y <= cy + r; y++) for (let x = Math.floor(cx - r); x <= cx + r; x++) {
+        if (!this.inBounds(x, y) || (x < ow && y < oh)) continue;   // new land only
+        const i = this.idx(x, y);
+        if (this.type[i] === TILE.WATER) continue;
+        if (Math.hypot(x - cx, y - cy) <= r * (0.7 + Math.random() * 0.4)) this.resource[i] = kind;
+      }
+    }
   }
 
   // Scatter a little natural terrain (a lake) into the freshly added land so
@@ -124,6 +185,7 @@ class Grid {
       built: Array.from(this.built),
       service: this.service,
       pop: Array.from(this.pop),
+      resource: this.resource ? Array.from(this.resource) : null,
     };
   }
 
@@ -140,6 +202,9 @@ class Grid {
     g.power = new Uint8Array(n);
     g.water = new Uint8Array(n);
     g.land = new Float32Array(n);
+    g.resource = data.resource ? Uint8Array.from(data.resource) : new Uint8Array(n);
+    // Old saves have no resources: generate a fresh deposit map for them.
+    if (!data.resource) g._genResources();
     return g;
   }
 }

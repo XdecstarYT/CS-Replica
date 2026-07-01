@@ -89,6 +89,7 @@ class Simulation {
     let powered = 0, total = 0;
     let happinessSum = 0, happinessN = 0;
     let propBase = 0, pollSum = 0, pollN = 0;   // property-tax base + pollution avg
+    let exportRevenue = 0;                       // resource-industry export income
 
     for (let i = 0; i < g.type.length; i++) {
       const t = g.type[i];
@@ -138,7 +139,15 @@ class Simulation {
       // Capacity comes from the *constructed* level — population only moves in
       // once the building (or its next storey) has actually finished building.
       const builtLevel = g.built ? g.built[i] : g.level[i];
-      const cap = (BUILDING_LEVELS[t][builtLevel] || { cap: 0 }).cap;
+      let cap = (BUILDING_LEVELS[t][builtLevel] || { cap: 0 }).cap;
+
+      // ── Industry expansion: factories on a natural-resource deposit run
+      // bigger and export goods for extra treasury income. ──
+      let resMeta = null;
+      if (t === TILE.ZONE_IND && g.resource) {
+        const rk = g.resource[i] || (g.resourceNear ? g.resourceNear(x, y) : 0);
+        if (rk && RESOURCE_META[rk]) { resMeta = RESOURCE_META[rk]; cap = Math.round(cap * (1 + resMeta.capBonus)); }
+      }
       // occupancy eases toward capacity scaled by quality, policy + economy growth.
       const pmG = this.policyMods ? (this.policyMods.growthMult ?? 1) : 1;
       const ecG = this.econMods   ? (this.econMods.growthMult ?? 1)   : 1;
@@ -151,7 +160,7 @@ class Simulation {
 
       if (t === TILE.ZONE_RES) { res += g.pop[i]; resCap += cap; }
       else if (t === TILE.ZONE_COM) { com += g.pop[i]; comCap += cap; }
-      else { ind += g.pop[i]; indCap += cap; }
+      else { ind += g.pop[i]; indCap += cap; if (resMeta) exportRevenue += g.pop[i] * resMeta.export * 0.5; }
 
       propBase += g.pop[i] * g.land[i];
       if (g.pop[i] > 0) { happinessSum += quality; happinessN++; }
@@ -208,7 +217,9 @@ class Simulation {
     upkeep += (en.upkeepAdd || 0);   // weather heating/cooling load
     // Tourism / transport buildings earn more when the city is busy and happy.
     const tourism = svcRevenue * (0.6 + this.happiness * 0.6) * (em.taxMult ?? 1);
-    this.lastBalance = Math.round(tax + tourism - upkeep);
+    // Resource industries export goods for extra income (economy-cycle sensitive).
+    this.exportRevenue = Math.round(exportRevenue * (em.taxMult ?? 1));
+    this.lastBalance = Math.round(tax + tourism + exportRevenue * (em.taxMult ?? 1) - upkeep);
     this.money += this.lastBalance;
     this.week++;
 
